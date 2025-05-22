@@ -1,0 +1,21 @@
+global:
+  api_endpoint: "http://localhost:11434/v1/chat/completions"
+  model_name: "gemma3:12b"
+  timeout: 60
+  default_retries: 2
+  default_retry_delay: 5
+
+tasks:
+  table_conversion:
+    prompt_file: "prompts/table_conversion.txt"
+    model_name: "gemma3:12b"
+    temperature: 0.1
+    max_tokens: 9600
+    user_prompt: "请将此表格图片转换为规范的Markdown格式文档"
+
+  image_caption:
+    prompt_file: "prompts/image_description.txt"
+    model_name: "gemma3:12b"
+    temperature: 0.2
+    max_tokens: 9600
+    user_prompt: "请为这张图片生成专业的描述文本"

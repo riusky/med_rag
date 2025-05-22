@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: 
+      context: .  # Dockerfile 所在目录
+      target: builder  # 显式指定多阶段构建
+    ports:
+      - "3000:80"   # 主机端口:容器端口
+    environment:
+      - NODE_ENV=production
+    networks:
+      - frontend-network
+
+  # nginx:
+  #   image: nginx:1.25-alpine
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf
+  #   depends_on:
+  #     - frontend
+
+networks:
+  frontend-network:
+    driver: bridge

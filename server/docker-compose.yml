@@ -1,0 +1,70 @@
+services:
+  api: &main_app
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    image: med_rag_server:${MED_RAG_SERVER_VERSION:-latest}
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MED_RAG_SERVER_HOST: 0.0.0.0
+      MED_RAG_SERVER_DB_HOST: med_rag_server-db
+      MED_RAG_SERVER_DB_PORT: 5432
+      MED_RAG_SERVER_DB_USER: med_rag_server
+      MED_RAG_SERVER_DB_PASS: med_rag_server
+      MED_RAG_SERVER_DB_BASE: med_rag_server
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
+  taskiq-worker:
+    <<: *main_app
+    labels: []
+    command:
+      - taskiq
+      - worker
+      - med_rag_server.tkq:broker
+
+  db:
+    image: postgres:16.3-bullseye
+    ports:
+    # Exposes DataBase port.
+    - "15432:5432"
+    hostname: med_rag_server-db
+    environment:
+      POSTGRES_PASSWORD: "med_rag_server"
+      POSTGRES_USER: "med_rag_server"
+      POSTGRES_DB: "med_rag_server"
+    volumes:
+      - med_rag_server-db-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: pg_isready -U med_rag_server
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-server  # 可选，但建议命名容器方便管理
+    hostname: prefect-server
+    ports:
+      - "9099:4200" 
+    command: >
+      sh -c "prefect config set PREFECT_API_URL='http://127.0.0.1:9099/api' &&
+      prefect server start --host 0.0.0.0"
+    # --port 9092
+    restart: always         # 自动重启策略（可选）
+    # environment:
+
+    # 如果不需要保留容器数据，可以添加自动清理（Docker Compose V2+）
+    # profiles: ["cleanup"]
+
+
+volumes:
+  med_rag_server-db-data:
+    name: med_rag_server-db-data

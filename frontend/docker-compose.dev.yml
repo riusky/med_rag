@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      target: development  # 指向新开发阶段
+    ports:
+      - "5173:3000"       # 保持端口一致
+    environment:
+      - NODE_ENV=development
+      - VITE_DEV_SERVER_HOST=0.0.0.0
+    volumes:
+      - .:/app            # 挂载全部项目文件
+      - /app/node_modules  # 排除覆盖
+    networks:
+      - dev-network
+
+networks:
+  dev-network:
+    driver: bridge

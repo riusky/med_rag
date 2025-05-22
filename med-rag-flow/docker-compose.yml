@@ -1,0 +1,9 @@
+services:
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-server
+    hostname: prefect-server
+    ports:
+      - "4200:4200"
+    command: prefect server start --host 0.0.0.0
+    restart: always
