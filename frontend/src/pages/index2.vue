@@ -68,17 +68,19 @@
                       <!-- 文档引用标签 -->
                       <TabsContent value="reference">
                         <div class="space-y-2 text-sm">
-                          <div v-for="(ref, index) in msg.metadata?.references" :key="index"
-                            class="p-3 bg-background rounded-lg">
-                            <div class="font-medium text-primary">
-                              document {{ index + 1 }}:
+                          <div v-if="msg.metadata?.references && msg.metadata.references.length > 0">
+                            <div v-for="(ref, index) in msg.metadata.references" :key="index"
+                              class="p-3 bg-background rounded-lg">
+                              <div class="font-medium text-primary">
+                                Reference {{ index + 1 }}: {{ ref.source }}
+                              </div>
+                              <p class="mt-1 text-muted-foreground break-all" v-if="ref.text && ref.text !== ref.source">
+                                {{ ref.text }}
+                              </p>
                             </div>
-                            <p class="mt-1 text-muted-foreground">
-                              {{ ref.text }}
-                            </p>
-                            <div class="mt-2 text-xs text-primary/70">
-                              source: {{ ref.source }}
-                            </div>
+                          </div>
+                          <div v-else>
+                            <p class="text-muted-foreground">No references provided.</p>
                           </div>
                         </div>
                       </TabsContent>
@@ -128,6 +130,7 @@
           class="h-full w-full resize-none"
           placeholder="Input message...Press (Shift/Alt/Ctrl) + Enter to create a new line."
           @keydown="handleKeydown"
+          :disabled="isLoading"
         />
       </div>
 
@@ -167,14 +170,20 @@
           </Button>
         </div>
 
-        <Button 
+        <Button
           size="default"
-          class="h-10 px-4" 
-          :disabled="!inputMessage.trim()" 
+          class="h-10 px-4"
+          :disabled="!inputMessage.trim() || isLoading"
           @click="sendMessage"
         >
-          <SendHorizontal class="h-5 w-5 mr-2" />
-          send
+          <template v-if="isLoading">
+            <Loader2 class="h-5 w-5 mr-2 animate-spin" />
+            Sending...
+          </template>
+          <template v-else>
+            <SendHorizontal class="h-5 w-5 mr-2" />
+            Send
+          </template>
         </Button>
       </div>
     </div>
@@ -196,7 +205,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Avatar } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Plus, Paperclip, Sparkles, Settings, SendHorizontal } from 'lucide-vue-next'
+import { Plus, Paperclip, Sparkles, Settings, SendHorizontal, Loader2 } from 'lucide-vue-next'
 import VMdPreview from '@kangc/v-md-editor/lib/preview'
 import '@kangc/v-md-editor/lib/style/preview.css'
 import githubTheme from '@kangc/v-md-editor/lib/theme/github'
@@ -225,7 +234,7 @@ VMdPreview.use(githubTheme, {
 const knowledgeBases = ref<KnowledgeBase[]>([])
 const selectedKbId = ref<number>()
 const isKbListLoading = ref(false)
-
+const isLoading = ref(false); // Added for loading state
 
 
 
@@ -358,8 +367,12 @@ const newConversation = () => {
 import { apiMedicalRag, type Reference } from '@/api/medicalRag'
 // 修改后的 sendMessage 方法
 const sendMessage = async () => {
+  if (isLoading.value) return; // Prevent multiple submissions
+  isLoading.value = true;
+
   if (!selectedKbId.value) {
     alert('请先选择知识库')
+    isLoading.value = false;
     return
   }
 
@@ -368,11 +381,15 @@ const sendMessage = async () => {
   const currentKb = knowledgeBases.value.find(kb => kb.id === selectedKbId.value)
   if (!currentKb || currentKb.processing_status !== 'completed') {
     alert('当前知识库不可用，请检查处理状态')
+    isLoading.value = false;
     return
   }
 
 
-  if (!inputMessage.value.trim()) return
+  if (!inputMessage.value.trim()) {
+    isLoading.value = false;
+    return
+  }
 
   try {
     // 确保当前对话存在
@@ -451,18 +468,21 @@ const sendMessage = async () => {
           //   // kb_id: currentKb.id,
           //   vector_path: currentKb.vector_storage_path
           // }
+          isLoading.value = false;
         },
         onError: (error) => {
           cancelAnimationFrame(animationFrameId!)
           assistantMessage.content = `Request failed: ${error}`
           currentConvo.messages = [...currentConvo.messages]
           smartScroll()
+          isLoading.value = false;
         }
       }
     )
   } catch (error) {
     console.error('Message sending failed:', error)
     handleSendError()
+    isLoading.value = false;
   }
 }
 

@@ -74,6 +74,7 @@ export const apiMedicalRag = {
       onError: (error: string) => void
     }
   ) {
+    let collectedReferences: Reference[] = []
     try {
 
       // 使用 Fetch API
@@ -106,10 +107,21 @@ export const apiMedicalRag = {
               case 'data':
                 handlers.onData(data.delta)
                 break
+              case 'references': // Handle the new 'references' event
+                if (data.sources && Array.isArray(data.sources)) {
+                  collectedReferences = data.sources.map((source: string) => ({
+                    source: source,
+                    text: source // Or a more descriptive text like "View content of " + source
+                  }))
+                }
+                break
               case 'complete':
                 handlers.onComplete({
-                  references: data.references || [],
-                  doc_count: data.metadata?.doc_count || 0
+                  references: collectedReferences, // Use collected references
+                  doc_count: data.metadata?.doc_count || 0,
+                  // Ensure other metadata fields from the 'complete' event are passed if any
+                  kb_id: data.metadata?.kb_id,
+                  vector_path: data.metadata?.vector_path
                 })
                 break
               case 'error':
