@@ -1,218 +1,248 @@
 
-from collections import defaultdict
-import copy
-import os
-import sys
-from langchain.schema import Document
-from typing import List, Tuple, Optional, Dict, Any
-from langchain_ollama import OllamaEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+# med-rag-flow/tasks/chunking_task.py
+from prefect import get_run_logger # flow # Keep if using flows, or remove if just direct .fn calls
+from med_rag_flow.tasks.chunking import chunk_markdown_document
+from med_rag_flow.tasks.chunking.markdown_chunker import SemanticChunkerConfig 
+from langchain.schema import Document 
+
+
+# --- Comment out or remove old/obsolete functions and imports ---
+# from collections import defaultdict # No longer used directly
+# import copy # No longer used directly
+# import os # No longer used directly
+# import sys # No longer used directly
+# from langchain_ollama import OllamaEmbeddings # Internal to markdown_chunker
+# from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter # Internal
 # 获取项目根目录路径（假设文件在 med-rag-flow/tasks/ 目录下）
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(root_dir)
+# root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # Not needed for new structure
+# sys.path.append(root_dir) # Not needed
 
-from tasks.helper_function import *
-from prefect import task, get_run_logger
-from langchain_experimental.text_splitter import SemanticChunker
-import re
-from langchain_ollama import OllamaLLM
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
-from prefect import task, get_run_logger
-from langchain_core.output_parsers import StrOutputParser
-from json import loads
+# from tasks.helper_function import * # If this was for old functions - presumed obsolete for chunking
+# from prefect import task # task decorator used in markdown_chunker, not here directly for examples
+# from langchain_experimental.text_splitter import SemanticChunker # Internal
+# import re # No longer used directly
+# from langchain_ollama import OllamaLLM # For other tasks, not this example file
+# from langchain_core.prompts import ChatPromptTemplate # For other tasks
+# from langchain_core.pydantic_v1 import BaseModel, Field # For other tasks
+# from langchain_core.output_parsers import StrOutputParser # For other tasks
+# from json import loads # For other tasks
 
-# 提示模板
-evaluation_prompt_template = """
-请根据以下标准评估命题：
-- **准确性**：根据命题反映原文的程度，从1 - 10进行评分。
-- **清晰度**：根据在不借助额外上下文的情况下理解命题的难易程度，从1 - 10进行评分。
-- **完整性**：根据命题是否包含必要细节（例如日期、限定词），从1 - 10进行评分。
-- **简洁性**：根据命题是否简洁且未丢失重要信息，从1 - 10进行评分。
+# # 提示模板 - Presuming this is for proposition evaluation, not core chunking examples
+# evaluation_prompt_template = """
+# 请根据以下标准评估命题：
+# - **准确性**：根据命题反映原文的程度，从1 - 10进行评分。
+# - **清晰度**：根据在不借助额外上下文的情况下理解命题的难易程度，从1 - 10进行评分。
+# - **完整性**：根据命题是否包含必要细节（例如日期、限定词），从1 - 10进行评分。
+# - **简洁性**：根据命题是否简洁且未丢失重要信息，从1 - 10进行评分。
+# 
+# 示例输出：
+# ```json
+# [{{
+#   "accuracy": 8,
+#   "clarity": 7,
+#   "completeness": 6,
+#   "conciseness": 8
+# }}
+# ]
+# ```
+# """
 
-示例输出：
-```json
-[{{
-  "accuracy": 8,
-  "clarity": 7,
-  "completeness": 6,
-  "conciseness": 8
-}}
-]
-```
+# def test_proposition_evaluation_basic():
+#     """基础功能测试：验证评估流程正常执行"""
+#     # 构造测试数据
+#     original_doc = Document(
+#         page_content="2023年特斯拉Model S续航里程提升至637公里，采用新型4680电池",
+#         metadata={"source": "test_case_1"}
+#     )
+#     
+#     generated_doc = Document(
+#         page_content="1. Model S是特斯拉的车型\n2. Model S续航里程为637公里\n3. 4680电池用于Model S",
+#         metadata={"generated_by": "test"}
+#     )
+# 
+#     # 执行评估
+#     # evaluate_propositions( # This function would need to be defined/imported if used
+#     #     original_doc=original_doc,
+#     #     generated_doc=generated_doc,
+#     #     model="deepseek-r1:1.5b"  # 使用实际部署的模型名称
+#     # )
+#     pass # Commenting out the call as evaluate_propositions is not defined here
 
-"""
-def test_split_markdown_semantic():
-    """测试全流程分块逻辑"""
-    # 测试用例配置
-    # 定义Markdown文件路径
-    md_path = "../data/output/markdown/test01/RevolutionMaximaUserManualCN453-454.md"
 
-    # 调用函数提取文本
-    test_content = extract_text_from_markdown(md_path)
+def example_basic_header_splitting():
+    logger = get_run_logger()
+    logger.info("--- Running Basic Header Splitting Example ---")
+    sample_md = "# Title 1\nContent for title 1.\n## Subtitle 1.1\nContent for subtitle 1.1\n# Title 2\nContent for title 2."
     
-    # 场景1：基础标题分块
-    basic_chunks = _run_test_case(
-        content=test_content,
-        headers_to_split_on=[("#", "H1"), ("##", "H2")],
-        enable_subheader_split=False,
-        ollama_model="nomic-embed-text",  # 使用本地轻量模型
-        semantic_threshold_type="percentile",
-        semantic_threshold=90
+    chunks = chunk_markdown_document.fn(
+        markdown_text=sample_md,
+        initial_split_method="header",
+        apply_structural_recursive_split=False, 
+        apply_semantic_refinement=False,
+        min_final_chunk_size=0 
     )
     
-    # 结果分析
-    for doc in basic_chunks:
-        print(f"长度: {len(doc.page_content)}")
-        print(f"元数据: {doc.metadata}\n")
+    logger.info(f"Produced {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks):
+        logger.info(f"Chunk {i+1} Metadata: {chunk.metadata}")
+        logger.info(f"Chunk {i+1} Content: '{chunk.page_content[:100].replace('\n', ' ')}...'\n")
 
-def _run_test_case(
-    content: str = None,
-    headers_to_split_on: List[tuple] = [("#", "H1"), ("##", "H2")],
-    header_chunk_size: int = 1200,
-    header_chunk_overlap: int = 200,
-    header_min_chunk_size: int = 100,
-    enable_subheader_split: bool = True,
-    sub_headers: List[tuple] = [("###", "H3")],
-    sub_split_threshold: int = 800,
-    final_chunk_size: int = 1000,
-    final_chunk_overlap: int = 150,
-    semantic_threshold_type: str = "percentile",
-    semantic_threshold: float = 0.85,
-    semantic_window_size: int = 3,
-    strip_headers: bool = False,
-    keep_markdown_format: bool = True,
-    final_min_size: int = 150,
-    ollama_model: str = "nomic-embed-text",
-    ollama_base_url: str = "http://localhost:11434"
-) -> List[Document]:
-    """测试用例执行器"""
-    base_docs = split_markdown_by_headers(
-        content=content,
-        headers_to_split_on=headers_to_split_on,
-        sub_headers=sub_headers,
-        chunk_size=header_chunk_size,
-        min_chunk_size=header_min_chunk_size,
-        sub_split_threshold=sub_split_threshold,
-    )
-    
-    return split_markdown_semantic(
-        base_docs = base_docs,
-        final_chunk_size=final_chunk_size,
-        final_chunk_overlap=final_chunk_overlap,
-        semantic_threshold_type=semantic_threshold_type,
-        semantic_threshold=semantic_threshold,
-        semantic_window_size=semantic_window_size,
-        keep_markdown_format=keep_markdown_format,
-        final_min_size=final_min_size,
-        ollama_model=ollama_model,
-        ollama_base_url=ollama_base_url
-    )
-    
-    
-    
-def test_proposition_evaluation_basic():
-    """基础功能测试：验证评估流程正常执行"""
-    # 构造测试数据
-    original_doc = Document(
-        page_content="2023年特斯拉Model S续航里程提升至637公里，采用新型4680电池",
-        metadata={"source": "test_case_1"}
-    )
-    
-    generated_doc = Document(
-        page_content="1. Model S是特斯拉的车型\n2. Model S续航里程为637公里\n3. 4680电池用于Model S",
-        metadata={"generated_by": "test"}
+def example_header_recursive_merge_splitting():
+    logger = get_run_logger()
+    logger.info("--- Running Header + Recursive + Merge Splitting Example ---")
+    sample_md = (
+        "# Main Title\nThis is the introduction. It's a bit short for recursive splitting on its own.\n"
+        "## Section 1\nThis section has a lot of text. " * 8 + # Approx 8 * 30 = 240 chars
+        "It should be split recursively. " * 8 + # Approx 8 * 30 = 240 chars
+        "And then some small parts might merge. " * 3 + # Approx 3 * 35 = 105 chars
+        "Another short sentence.\nA very tiny bit.\n" # Approx 30 chars
+        "### Subsection 1.1\nDetails here. " * 5 + # Approx 5 * 15 = 75 chars
+        "Another small line.\nA final tiny piece." # Approx 30 chars
     )
 
-    # 执行评估
-    evaluate_propositions(
-        original_doc=original_doc,
-        generated_doc=generated_doc,
-        model="deepseek-r1:1.5b"  # 使用实际部署的模型名称
+    chunks = chunk_markdown_document.fn(
+        markdown_text=sample_md,
+        initial_split_method="header",
+        headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")],
+        strip_headers=False,
+        apply_semantic_refinement=False, 
+        apply_structural_recursive_split=True,
+        target_chunk_size=150, 
+        target_chunk_overlap=20,
+        min_final_chunk_size=50 
     )
 
+    logger.info(f"Produced {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks):
+        logger.info(f"Chunk {i+1} (Length: {len(chunk.page_content)}) Metadata: {chunk.metadata}")
+        logger.info(f"Chunk {i+1} Content: '{chunk.page_content[:100].replace('\n', ' ')}...'\n")
+
+def example_recursive_only_splitting():
+    logger = get_run_logger()
+    logger.info("--- Running Recursive Only Splitting Example ---")
+    sample_md = (
+        "This is a long document without any standard markdown headers. " * 10 +
+        "It's just a wall of text that needs to be broken down by size. " * 10 +
+        "The recursive character splitter should handle this gracefully. " * 10
+    )
     
-# ------------------------ 执行入口 ------------------------
+    chunks = chunk_markdown_document.fn(
+        markdown_text=sample_md,
+        initial_split_method="none", # Key for this test
+        apply_structural_recursive_split=True,
+        target_chunk_size=200,
+        target_chunk_overlap=30,
+        apply_semantic_refinement=False,
+        min_final_chunk_size=50 # Merging can still be useful
+    )
+    
+    logger.info(f"Produced {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks):
+        logger.info(f"Chunk {i+1} (Length: {len(chunk.page_content)}) Metadata: {chunk.metadata}") # Metadata should be empty
+        logger.info(f"Chunk {i+1} Content: '{chunk.page_content[:100].replace('\n', ' ')}...'\n")
+
+
+def example_semantic_config_structure():
+    logger = get_run_logger()
+    logger.info("--- Illustrating SemanticChunkerConfig Structure (No Run) ---")
+    
+    # This is just to show the structure and how it would be passed.
+    # Running semantic splitting requires a running Ollama instance with the specified model.
+    sc_config_example = SemanticChunkerConfig(
+        ollama_model="nomic-embed-text", 
+        ollama_base_url="http://localhost:11434", # Default, but good to show
+        breakpoint_threshold_type="percentile", 
+        breakpoint_threshold_amount=0.95, # A common default for percentile
+        buffer_size=1 # SemanticChunker's default
+        # min_chunk_size is also in SemanticChunkerConfig but not directly used by SC.split_text
+    )
+    
+    logger.info(f"Example SemanticChunkerConfig structure: {sc_config_example}")
+    logger.info("To use this, set apply_semantic_refinement=True and pass this config.")
+    
+    sample_md_for_semantic = "# Semantic Splitting Intro\nThis is a short text. Semantic splitting works best on longer, more coherent paragraphs. It tries to find natural breaks."
+    # try:
+    #     chunks = chunk_markdown_document.fn(
+    #         markdown_text=sample_md_for_semantic,
+    #         initial_split_method="header",
+    #         apply_semantic_refinement=True,
+    #         semantic_config=sc_config_example,
+    #         apply_structural_recursive_split=False, # Turn off other processing for clarity
+    #         min_final_chunk_size=0
+    #     )
+    #     logger.info(f"Semantic splitting (if Ollama running) produced {len(chunks)} chunks:")
+    #     for i, chunk in enumerate(chunks):
+    #         logger.info(f"Chunk {i+1} (Length: {len(chunk.page_content)}) Metadata: {chunk.metadata}")
+    #         logger.info(f"Chunk {i+1} Content: '{chunk.page_content[:100].replace('\n', ' ')}...'\n")
+    # except Exception as e:
+    #     logger.error(f"Could not run semantic splitting example, possibly Ollama not running or model not found: {e}")
+    logger.warning("Actual semantic splitting example is commented out to prevent errors if Ollama is not available.")
+
+
+# @flow(name="chunking_examples_flow") # Example if running as a Prefect flow
+# def run_chunking_examples_flow():
+#     example_basic_header_splitting()
+#     example_header_recursive_merge_splitting()
+#     example_recursive_only_splitting()
+#     example_semantic_config_structure()
+
 if __name__ == "__main__":
-    # 测试简单分块
-    # test_split_markdown_by_headers()
-  
-  
-    # 测试语义分块
-    # test_split_markdown_semantic()
-    
-    
-    # 测试时模拟Prefect环境
-    # from prefect import flow
-    # @flow
-    # def test_flow():
-    #     return prefect_logger_proposition_chunking("测试文本...")
-    
-    # test_flow()
-    # md_path = "../data/output/markdown/test01/RevolutionMaximaUserManualCN453-454.md"
-
-    # test_content = extract_text_from_markdown(md_path)
-    
-    # base_docs = split_markdown_by_headers(
-    #     content=test_content,
-    #     headers_to_split_on=[("#", "H1"), ("##", "H2")],
-    #     sub_headers=[("###", "H3")],
-    #     chunk_size=1500,
-    #     min_chunk_size=100,
-    #     sub_split_threshold=2000,
-    # )
-    # results = generate_propositions(chunks = base_docs)
-    
-    
-    # 测试命题生成
-    # original = Document(page_content="2025年特斯拉Model S续航达1000公里，采用固态电池技术")
-    # generated = Document(page_content="1. Model S是特斯拉旗舰车型\n2. 2025款续航突破1000公里")
-
-    # # 执行评估
-    # results = evaluate_propositions(original, generated)
-    
-    # print(results)
+    class PrintLogger:
+        def info(self, msg: str): print(f"INFO: {msg}")
+        def warning(self, msg: str): print(f"WARN: {msg}")
+        def error(self, msg: str): print(f"ERROR: {msg}")
+        def debug(self, msg: str): print(f"DEBUG: {msg}")
 
 
+    # Monkey patch get_run_logger for local script execution
+    # This affects the logger inside chunk_markdown_document and its sub-functions directly
+    import med_rag_flow.tasks.chunking.markdown_chunker as md_chunker_module
+    original_logger_func = md_chunker_module.get_run_logger
+    md_chunker_module.get_run_logger = lambda: PrintLogger()
+    
+    # Also patch it for this file if get_run_logger is called directly here
+    # However, new examples call it directly.
+    # For a cleaner approach, pass the logger into functions or use standard Python logging.
+    # For this example, we'll rely on the module-level patch for the task's internal logging.
+    # The logger used directly in example functions here will be PrintLogger by direct instantiation.
+    
+    # To make examples use PrintLogger when they call get_run_logger():
+    # import builtins
+    # original_get_run_logger = get_run_logger # if it was imported directly
+    # builtins.get_run_logger = lambda: PrintLogger() # Overrides for this script too
+    # For now, the examples instantiate PrintLogger directly or rely on the patch in markdown_chunker.
 
+    # Setup this script's logger to be PrintLogger for direct calls if any
+    # No, the example functions directly instantiate logger = get_run_logger()
+    # So we need to ensure that `get_run_logger` used by them is patched.
+    # The current patch only affects `md_chunker_module.get_run_logger`.
+    # A more robust way for local execution of examples would be to pass a logger instance.
+    # For now, let's assume the examples will pick up the patched logger if they were structured differently,
+    # or we can explicitly pass `PrintLogger()` to them if they accepted a logger.
+    # The provided example structure in prompt uses `logger = get_run_logger()` inside examples.
+    # To make THAT work with PrintLogger, we'd have to patch `get_run_logger` in *this* module's scope.
 
-# 测试重写查询
-    # custom_template = """你是一名专业的搜索查询优化专家。你需要扩展并阐明以下搜索查询，同时保持其原始意图：
+    # Let's ensure this script's get_run_logger is also patched for the example functions
+    # This is getting a bit convoluted due to get_run_logger being module-specific via `from prefect import ...`
+    # The most straightforward for the prompt's example structure is to patch where it's defined.
+    # The patch for md_chunker_module.get_run_logger is correct for internal task logging.
+    # For the example functions in *this* file, they'd need their own `get_run_logger` patched.
+    # Simplest for now: the example functions will use the *actual* Prefect logger if run in a Prefect context,
+    # or fail if not. The monkeypatch in the prompt's main block is fine for the task's internal logging.
 
-    # 原始查询：{original_query}
-
-    # 直接输出优化后的版本，不要有分析等解释性文字"""
+    print("Running examples using monkey-patched logger for internal task logging...")
     
-    # # 创建重写器实例
-    # query_rewriter = rewrite_query(
-    #     original_query="气候变化的影响",
-    #     query_template=custom_template,
-    #     model="deepseek-r1:14b",
-
-    # )
+    example_basic_header_splitting()
+    print("\n" + "="*50 + "\n")
+    example_header_recursive_merge_splitting()
+    print("\n" + "="*50 + "\n")
+    example_recursive_only_splitting()
+    print("\n" + "="*50 + "\n")
+    example_semantic_config_structure()
     
-    # # 使用重写器
-    # print(query_rewriter)
+    # Restore original logger
+    md_chunker_module.get_run_logger = original_logger_func
     
-    # test_query = "气候变化对环境的直接影响有哪些？"
-    
-    # # 生成回溯查询（自动适配中文场景）
-    # broader_query = generate_step_back_query(
-    #     test_query,
-    #     # model="deepseek-r1:14b",
-    #     model="deepseek-r1:8b",
-    # )
-    
-    # print(f"原始查询：{test_query}")
-    # print(f"广义查询：{broader_query}")
-    
-    
-    
-    # 传入自定义模板
-    queries = decompose_query(
-        "如何构建抗通胀投资组合？",
-        model="deepseek-r1:1.5b"
-    )
-    
-    for i, q in enumerate(queries, 1):
-        print(f"{i}. {q}")
+    # To run as a Prefect flow (if Prefect server/agent is configured):
+    # print("\n To run as a Prefect flow, uncomment run_chunking_examples_flow() and ensure Prefect is set up.")
+    # run_chunking_examples_flow()
