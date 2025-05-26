@@ -427,18 +427,18 @@ def process_outline(pdf_file: Path, pdf_stem: str) -> Tuple[List[Dict], Dict]:
     try:
         # 实际场景应调用真实大纲提取
         outline_data = extract_outline.submit(pdf_file)
-        outline_data = [
-            {
-              "level": 1,
-              "title": "剂量调整因数 - 使用 Auto/Smart mA 时的噪声指数调整方法",
-              "page": 0
-            },
-            {
-              "level": 2,
-              "title": "例如，若要计算基于已选 ASiR-V 级别的噪声指数 (NI) 的剂量减少，可将下表用于标准重建算法。",
-              "page": 0
-            },
-        ]
+        # outline_data = [
+        #     {
+        #       "level": 1,
+        #       "title": "剂量调整因数 - 使用 Auto/Smart mA 时的噪声指数调整方法",
+        #       "page": 0
+        #     },
+        #     {
+        #       "level": 2,
+        #       "title": "例如，若要计算基于已选 ASiR-V 级别的噪声指数 (NI) 的剂量减少，可将下表用于标准重建算法。",
+        #       "page": 0
+        #     },
+        # ]
         
         # 构建大纲索引
         outline_index = {}

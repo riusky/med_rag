@@ -330,34 +330,10 @@ if __name__ == '__main__':
     # 测试案例配置
     TEST_CASES = [
         {
-            "path": "../data/output/markdown/test01/RevolutionMaximaUserManualCN453-454.md",  # 单个文件测试
-            "processor_type": "header",
-            "params": {
-                "headers_to_split_on": [("#", "H1"), ("##", "H2")],
-                "chunk_size": 800
-            }
-        },
-        {
-            "path": "./",  # 目录测试
-            "processor_type": "semantic",
-            "params": {
-                "chunk_size": 1000,
-                "semantic_threshold": 0.9
-            }
-        },
-        {
-            "path": "../data/output/markdown/test02",  # 目录测试
+            "path": "./RevolutionMaximaUserManualCN_enhanced.md",  # 目录测试
             "processor_type": "header_hybrid",
             "params": {
-                "chunk_size": 1000,
-                "semantic_threshold": 0.9
-            }
-        },
-        {
-            "path": "../data/output/markdown/test02",  # 目录测试
-            "processor_type": "header_hybrid_semantic",
-            "params": {
-                "chunk_size": 1000,
+                "chunk_size": 1500,
                 "semantic_threshold": 0.9
             }
         }

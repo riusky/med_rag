@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     with environment variables.
     """
 
-    host: str = "127.0.0.1"
+    host: str = "host.docker.internal"
     port: int = 8000
     # quantity of workers for uvicorn
     workers_count: int = 1
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     
     # Prefect 配置
     PREFECT_API_URL: str = "http://prefect-server:4200/api"
-    PREFECT_UI_URL: str = "http://127.0.0.1:4200"
+    PREFECT_UI_URL: str = "http://host.docker.internal:9092"
     PREFECT_API_KEY: str = "api-key"
     
     # 路径配置

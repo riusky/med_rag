@@ -7,6 +7,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+med_rag_server/static
+med_rag_server/vectorstorage
+
 # C extensions
 *.so
 

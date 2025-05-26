@@ -21,9 +21,6 @@ def handle_text(item: Dict) -> str:
 )
 def handle_table(item: Dict, data: List[Dict], index: int) -> str:
     """带完整日志的表格处理方法"""
-    item.setdefault('conversion_success', False)
-    item['markdown_table'] = ""
-    item['error_message'] = ""
     try:
         if not (img_path := item.get('img_path')):
             raise ValueError("Missing img_path in table item")
@@ -48,7 +45,7 @@ def handle_table(item: Dict, data: List[Dict], index: int) -> str:
             'type': "image",
             'conversion_success': False
         })
-        return f"\n{item.get('table_caption','')}\n"
+        return f"\n{item.get('table_body','')}\n"
 
 @task(
      name="handle_image",
@@ -67,7 +64,6 @@ def handle_image(
     item.setdefault('conversion_success', False)
     item['image_description'] = ""
     item['error_message'] = ""
-    
     start_time = time.time()
     try:
         # 基础验证

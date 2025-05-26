@@ -68,79 +68,81 @@ from langchain.callbacks import AsyncIteratorCallbackHandler
 from langchain.callbacks import AsyncIteratorCallbackHandler
 from fastapi.responses import StreamingResponse
 import json
+logger = logging.getLogger(__name__)
 
 @router.post("/medical-search-stream")
 async def medical_rag_search_stream(request: Request, query: MedicalQuery):
-    """修正版流式医疗RAG接口"""
+    """基于query方法结构的流式接口修复"""
     try:
         qa_chain = request.app.state.qa_chains.get(query.kb_id)
         if not qa_chain:
-            raise HTTPException(
-                status_code=503,
-                detail=f"知识库 {query.kb_id} 的问答系统未初始化"
-            )
+            raise HTTPException(503, detail="知识库未初始化")
 
         callback = AsyncIteratorCallbackHandler()
         
         async def event_stream():
-            try:
-                # 异步任务包装（修正事件触发机制）
-                async def wrap_done(future):
-                    try:
-                        await future
-                    except Exception as e:
-                        callback.done.set()
-                    finally:
-                        callback.done.set()
+            final_result = None
+            
+            # 创建完成事件信号量
+            done_event = asyncio.Event()
+            
+            async def wrap_done(future):
+                nonlocal final_result
+                try:
+                    final_result = await future
+                except Exception as e:
+                    logger.error(f"任务执行异常: {str(e)}")
+                finally:
+                    callback.done.set()
+                    done_event.set()
 
-                task = asyncio.create_task(
-                    qa_chain.acall(
-                        {"query": query.question},
-                        callbacks=[callback]
-                    )
+            # 创建异步任务
+            task = asyncio.create_task(
+                qa_chain.acall(
+                    {"query": query.question},
+                    callbacks=[callback]
                 )
+            )
+            asyncio.create_task(wrap_done(task))
 
-                # 启动异步监控
-                asyncio.create_task(wrap_done(task))
+            # 流式传输回答内容
+            async for token in callback.aiter():
+                yield f"event: data\ndata: {json.dumps({'delta': token}, ensure_ascii=False)}\n\n"
 
-                # 流式传输（兼容Event机制）
-                async for token in callback.aiter():
-                    yield f"event: data\ndata: {json.dumps({'delta': token}, ensure_ascii=False)}\n\n"
-
-                # 添加参考文献处理逻辑
-                if task.done() and not task.exception():
-                    result = task.result()
-                    sources = [doc.metadata.get('source') for doc in result.get('source_documents', [])]
-                    yield (
-                        f"event: references\n"
-                        f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
-                    )
-
-
-            except HTTPException as he:
-                yield f"event: error\ndata: {json.dumps({'error': he.detail}, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                error_msg = f"数据流异常: {str(e)}"
-                logger.error(f"{error_msg}\n{traceback.format_exc()}")
-                yield f"event: error\ndata: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
-            finally:
-                callback.done.set()
+            # 处理参考文献
+            await done_event.wait()
+            if isinstance(final_result, dict):  
+                source_docs = final_result.get("source_documents", [])
+                logger.info(f"获取到源文档数量: {len(source_docs)}")
+                
+                # 直接返回文档对象的核心内容（需根据实际文档结构调整）
+                serialized_docs = [
+                    {
+                        "page_content": doc.page_content,
+                        "metadata": dict(doc.metadata)
+                    } 
+                    for doc in source_docs
+                ]
+                
+                yield f"event: references\ndata: {json.dumps({'source_docs': serialized_docs}, ensure_ascii=False)}\n\n"
+            yield f"event: complete\ndata: {json.dumps({'metadata': {}}, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
             headers={
-                "X-Stream-ID": f"kb{query.kb_id}-medical-rag",
-                "X-KnowledgeBase-ID": str(query.kb_id)
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-store"
             }
         )
 
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.critical(f"接口严重错误: {str(e)}", exc_info=True)
-        raise HTTPException(500, "系统处理失败") from e
-
+        logger.critical(f"接口异常: {str(e)}")
+        raise HTTPException(500, "系统错误") from e
+      
+      
 class TaskStatus(str, Enum):
     PENDING = "pending"
     SUCCESS = "success"
@@ -234,10 +236,29 @@ def ensure_upload_dir(kb_id: int) -> str:
         )
 
 def generate_unique_filename(original_name: str) -> str:
-    """生成唯一文件名"""
-    ext = original_name.split('.')[-1] if '.' in original_name else ''
-    unique_id = uuid.uuid4().hex
-    return f"{unique_id[:8]}_{unique_id[8:16]}.{ext}" if ext else unique_id
+    """生成保留原名的唯一文件名
+    
+    Args:
+        original_name: 原始文件名（可包含路径）
+        
+    Returns:
+        格式为：原文件名_8位随机码.扩展名
+        示例：document_1a2b3c4d.pdf
+    """
+    # 分离文件名和扩展名
+    base_name, ext = os.path.splitext(original_name)
+    
+    # 提取纯文件名（去除路径）
+    pure_name = os.path.basename(base_name)
+    
+    # 生成8位随机码
+    unique_id = uuid.uuid4().hex[:8]
+    
+    # 组合新文件名
+    if ext:  # 有扩展名的情况
+        return f"{pure_name}_{unique_id}{ext}"
+    else:    # 无扩展名的情况
+        return f"{pure_name}_{unique_id}"
 
 @router.post("/", response_model=DocumentDTO, status_code=status.HTTP_201_CREATED)
 async def create_document(

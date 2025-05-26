@@ -174,13 +174,6 @@ Located in `server/med_rag_server/db/models/`. These are SQLAlchemy declarative 
         *   `knowledge_base` (Relationship): Many-to-one relationship back to `KnowledgeBaseModel`.
         *   `metadata_` (JSON, Nullable): Stores additional metadata about the document (e.g., author, number of pages, custom tags). Stored as `metadata_` to avoid conflict with SQLAlchemy's `metadata` attribute.
 
-*   **`DummyModel` (`dummy_model.py`):**
-    *   A placeholder or example model.
-    *   **Key Fields:**
-        *   `id` (Integer, Primary Key): Unique identifier.
-        *   `name` (String, Nullable, Unique): Name for the dummy entry.
-        *   `created_at` (DateTime, Default: now): Timestamp of creation.
-
 #### 2.4.2. Data Access Objects (DAOs)
 Located in `server/med_rag_server/db/dao/`. DAOs encapsulate the logic for interacting with the database models, providing a CRUD (Create, Read, Update, Delete) interface.
 
@@ -511,8 +504,6 @@ Routing is managed by `vue-router`. The main configuration is typically in `fron
     | Path                | Name         | Component (View)     | `meta` (example)                  | Lazy Loaded? |
     | ------------------- | ------------ | -------------------- | --------------------------------- | ------------ |
     | `/`                 | `Home`       | `HomeView.vue`       | `{ requiresAuth: true }`          | No (example) |
-    | `/login`            | `Login`      | `LoginView.vue`      |                                   | Yes          |
-    | `/register`         | `Register`   | `RegisterView.vue`   |                                   | Yes          |
     | `/chat`             | `Chat`       | `Index2View.vue`     | `{ requiresAuth: true }`          | Yes          |
     | `/kb`               | `KBList`     | `KbListView.vue`     | `{ requiresAuth: true }`          | Yes          |
     | `/kb/create`        | `KBCreate`   | `KbCreateView.vue`   | `{ requiresAuth: true }`          | Yes          |
@@ -520,7 +511,6 @@ Routing is managed by `vue-router`. The main configuration is typically in `fron
     | `/kb/:id/upload`    | `KBUpload`   | `KbUploadView.vue`   | `{ requiresAuth: true, props:true}`| Yes          |
     | `/documents`        | `DocList`    | `DocListView.vue`    | `{ requiresAuth: true }`          | Yes          |
     | `/documents/:id`    | `DocDetail`  | `DocDetailView.vue`  | `{ requiresAuth: true, props:true}`| Yes          |
-    | `/settings`         | `Settings`   | `SettingsView.vue`   | `{ requiresAuth: true }`          | Yes          |
     | `/:pathMatch(.*)*` | `NotFound`   | `NotFoundView.vue`   |                                   | Yes          |
 
     *Lazy Loading Example for a route:*
@@ -750,44 +740,6 @@ File: `frontend/src/stores/index.ts`
     export default pinia
     ```
 *   This `pinia` instance is then used in `main.ts` (`app.use(pinia)`).
-
-#### 3.6.2. Auth Store (`stores/auth.store.ts`)
-File: `frontend/src/stores/auth.store.ts`
-
-*   **Purpose:** Manages authentication state (user, token, login status).
-*   **Structure (`defineStore`):**
-    *   `id`: Unique identifier (e.g., `'auth'`).
-    *   `state`: A function returning the initial state object.
-        *   `token: string | null` (persisted in localStorage)
-        *   `user: User | null` (User type defined elsewhere, e.g., `{ id: number, username: string, email: string }`)
-        *   `isAuthenticated: boolean` (could be a getter)
-        *   `returnUrl: string | null`
-    *   `getters`: Computed properties derived from state.
-        *   `isAuthenticated: (state) => !!state.token && !!state.user`
-        *   `currentUser: (state) => state.user`
-    *   `actions`: Methods to modify state or perform asynchronous operations.
-        *   `login(credentials: LoginCredentials): Promise<void>`: Calls auth API, on success stores token and user, sets `isAuthenticated`.
-        *   `logout(): void`: Clears token and user, sets `isAuthenticated` to false, redirects to login.
-        *   `register(details: RegisterDetails): Promise<void>`: Calls registration API.
-        *   `fetchUser(): Promise<void>`: Fetches user details using the stored token.
-        *   `setToken(token: string | null)`: Sets token and updates localStorage.
-        *   `setUser(user: User | null)`: Sets user data.
-*   **Persistence:**
-    *   Often uses `pinia-plugin-persistedstate` to keep parts of the store (like the token) synchronized with localStorage.
-    *   Configuration for persistence is done within the `defineStore` options:
-        ```typescript
-        export const useAuthStore = defineStore('auth', {
-          state: () => ({
-            token: null as string | null,
-            user: null as User | null,
-            // ...
-          }),
-          // ... getters and actions
-          persist: { // If using pinia-plugin-persistedstate
-            paths: ['token', 'user'], // Specify which parts of state to persist
-          },
-        })
-        ```
 
 ---
 

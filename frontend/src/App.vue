@@ -60,8 +60,6 @@ const authStore = useAuthStore()
 const { isLoggedIn } = storeToRefs(authStore)
 
 onBeforeMount(async () => {
-  // Nếu đã đăng nhập thì phải tải dữ liệu thông tin người dùng mới nhất
-  // Đoạn code này được thực thi nếu refresh trang hoặc mở tab mới
   if (toValue(isLoggedIn)) {
     try {
       const { data } = await apiGetCurrentUser()

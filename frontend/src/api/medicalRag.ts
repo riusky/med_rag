@@ -108,10 +108,10 @@ export const apiMedicalRag = {
                 handlers.onData(data.delta)
                 break
               case 'references': // Handle the new 'references' event
-                if (data.sources && Array.isArray(data.sources)) {
-                  collectedReferences = data.sources.map((source: string) => ({
-                    source: source,
-                    text: source // Or a more descriptive text like "View content of " + source
+                if (data.source_docs && Array.isArray(data.source_docs)) {
+                  collectedReferences = data.source_docs.map((doc: any) => ({
+                    content: doc.page_content,
+                    metadata: doc.metadata
                   }))
                 }
                 break

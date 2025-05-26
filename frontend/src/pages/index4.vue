@@ -310,7 +310,7 @@ onMounted(() => {
                 </div>
                 <div class="flex items-center gap-1">
                   <Calendar :size="16" class="stroke-[1.5]" />
-                  <span>{{ kb.created_at }}</span>
+                  <span>{{ kb.created_at.split('T')[0] }}</span>
                 </div>
               </div>
             </div>

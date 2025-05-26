@@ -45,150 +45,170 @@
                     {{ msg.role === 'user' ? 'you' : 'AI' }}
                   </AvatarFallback>
                 </Avatar>
-           
-                  <div class="ml-4 rounded-xl w-full bg-muted" v-if="msg.role === 'assistant'">
-                    <Tabs default-value="content">
-                      <TabsList class="grid grid-cols-3 w-full">
-                        <TabsTrigger value="content" class="text-xs p-2 h-8 border-muted-foreground">
-                          reply content
-                        </TabsTrigger>
-                        <TabsTrigger value="reference" class="text-xs p-2 h-8 border-muted-foreground">
-                          document citation
-                        </TabsTrigger>
-                        <TabsTrigger value="images" class="text-xs p-2 h-8 border-muted-foreground">
-                          Original image
-                        </TabsTrigger>
-                      </TabsList>
 
-                      <!-- 内容标签 -->
-                      <TabsContent value="content">
-                        <v-md-preview :text="msg.content" :key="`${msg.timestamp}_${msg.content.length}`" class="prose prose-sm max-w-none markdown-body" />
-                      </TabsContent>
+                <div class="ml-4 rounded-xl w-full bg-muted" v-if="msg.role === 'assistant'">
+                  <Tabs default-value="content">
+                    <TabsList class="grid grid-cols-3 w-full">
+                      <TabsTrigger value="content" class="text-xs p-2 h-8 ">
+                        Reply Content
+                      </TabsTrigger>
+                      <TabsTrigger value="reference" class="text-xs p-2 h-8 ">
+                        Document Citation
+                      </TabsTrigger>
+                      <TabsTrigger value="images" class="text-xs p-2 h-8">
+                        Original Image
+                      </TabsTrigger>
+                    </TabsList>
 
-                      <!-- 文档引用标签 -->
-                      <TabsContent value="reference">
-                        <div class="space-y-2 text-sm">
-                          <div v-if="msg.metadata?.references && msg.metadata.references.length > 0">
-                            <div v-for="(ref, index) in msg.metadata.references" :key="index"
-                              class="p-3 bg-background rounded-lg">
-                              <div class="font-medium text-primary">
-                                Reference {{ index + 1 }}: {{ ref.source }}
+                    <!-- 内容标签 -->
+                    <TabsContent value="content">
+                      <v-md-preview :text="msg.content" :key="`${msg.timestamp}_${msg.content.length}`"
+                        class="prose prose-sm max-w-none markdown-body" />
+                    </TabsContent>
+
+                    <!-- 文档引用标签 -->
+                    <TabsContent value="reference">
+                      <div class="space-y-3 text-sm">
+                        <div v-if="msg.metadata?.references?.length">
+                          <div v-for="(ref, index) in msg.metadata.references" :key="index"
+                            class="p-4 bg-background rounded-lg border">
+                            <!-- 元数据头 -->
+                            <div class="flex items-center gap-2 mb-3">
+                              <FileText class="h-5 w-5 text-primary flex-shrink-0" />
+                              <div>
+                                <h3 class="font-medium">Reference {{ index + 1 }}</h3>
+                                <p class="text-xs text-muted-foreground">
+                                  {{ formatMetadataSource(ref.metadata) }}
+                                </p>
                               </div>
-                              <p class="mt-1 text-muted-foreground break-all" v-if="ref.text && ref.text !== ref.source">
-                                {{ ref.text }}
-                              </p>
+                            </div>
+
+                            <!-- 动态元数据字段 -->
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                              <div v-for="(value, key) in ref.metadata" :key="key" class="flex items-start gap-1.5"
+                                v-if="shouldDisplayField(key, value)">
+                                <span class="font-medium text-muted-foreground capitalize">
+                                  {{ formatFieldName(key) }}:
+                                </span>
+                                <span class="break-all">
+                                  {{ formatFieldValue(key, value) }}
+                                </span>
+                              </div>
+                            </div>
+
+                            <!-- 内容预览 -->
+                            <div v-if="ref.content" class="mt-4">
+                              <div class="text-xs font-medium mb-1 text-muted-foreground">
+                                Content Preview:
+                              </div>
+                              <div class="p-2 bg-muted rounded prose prose-sm max-h-[600px] overflow-auto">
+                                <v-md-preview :text="truncateContent(ref.content)" />
+                              </div>
                             </div>
                           </div>
-                          <div v-else>
-                            <p class="text-muted-foreground">No references provided.</p>
-                          </div>
                         </div>
-                      </TabsContent>
-
-                      <!-- 图片标签 -->
-                      <TabsContent value="images" class="mt-4">
-                        <div class="grid grid-cols-2 gap-3">
-                          <div v-for="(img, index) in msg.metadata?.images" :key="index"
-                            class="aspect-square overflow-hidden rounded-md border">
-                            <img :src="img.url" :alt="img.caption || 'reference image'" class="w-full h-full object-cover" />
-                          </div>
+                        <div v-else class="text-muted-foreground">
+                          No references available
                         </div>
-                      </TabsContent>
-                    </Tabs>
+                      </div>
+                    </TabsContent>
 
-                    <!-- 时间戳 -->
-                    <div class="text-xs opacity-70 mt-2 mb-2 ml-2">
-                      {{ formatTime(msg.timestamp) }}
-                    </div>
+                    <!-- 图片标签 -->
+                    <TabsContent value="images" class="mt-4">
+                      <div class="grid grid-cols-2 gap-3">
+                        <div v-for="(img, index) in msg.metadata?.images" :key="index"
+                          class="aspect-square overflow-hidden rounded-md border">
+                          <img :src="img.url" :alt="img.caption || 'reference image'"
+                            class="w-full h-full object-cover" />
+                        </div>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+
+                  <!-- 时间戳 -->
+                  <div class="text-xs opacity-70 mt-2 mb-2 ml-2">
+                    {{ formatTime(msg.timestamp) }}
                   </div>
-
-                  <!-- 用户消息保持原样 -->
-                  <template v-else class="text-sm">
-                    <span class="max-w-4xl rounded-xl bg-primary text-primary-foreground pl-2 pr-2">
-                      {{ msg.content }}
-                    </span>
-                  </template>
-
-   
                 </div>
+
+                <!-- 用户消息保持原样 -->
+                <template v-else class="text-sm">
+                  <span class="max-w-4xl rounded-xl bg-primary text-primary-foreground pl-2 pr-2">
+                    {{ msg.content }}
+                  </span>
+                </template>
+
+
+              </div>
             </div>
           </ScrollArea>
         </ResizablePanel>
 
         <ResizableHandle with-handle />
 
-<!-- 输入操作区域 -->
-<ResizablePanel :default-size="20" :min-size="15">
-  <div class="h-full p-4 bg-background/90 backdrop-blur border-t">
-    <!-- 外层容器使用 flex 布局 -->
-    <div class="max-w-5xl mx-auto h-full flex flex-col">
-      <!-- 文本框容器（占满剩余高度） -->
-      <div class="flex-1 min-h-0 mb-3">
-        <Textarea 
-          ref="textareaRef"
-          v-model="inputMessage"
-          class="h-full w-full resize-none"
-          placeholder="Input message...Press (Shift/Alt/Ctrl) + Enter to create a new line."
-          @keydown="handleKeydown"
-          :disabled="isLoading"
-        />
-      </div>
+        <!-- 输入操作区域 -->
+        <ResizablePanel :default-size="20" :min-size="15">
+          <div class="h-full p-4 bg-background/90 backdrop-blur border-t">
+            <!-- 外层容器使用 flex 布局 -->
+            <div class="max-w-5xl mx-auto h-full flex flex-col">
+              <!-- 文本框容器（占满剩余高度） -->
+              <div class="flex-1 min-h-0 mb-3">
+                <Textarea ref="textareaRef" v-model="inputMessage" class="h-full w-full resize-none"
+                  placeholder="Input message...Press (Shift/Alt/Ctrl) + Enter to create a new line."
+                  @keydown="handleKeydown" :disabled="isLoading" />
+              </div>
 
-      <!-- 操作按钮行（固定高度） -->
-      <div class="flex justify-between items-center h-10">
-        <div class="flex gap-2">
+              <!-- 操作按钮行（固定高度） -->
+              <div class="flex justify-between items-center h-10">
+                <div class="flex gap-2">
 
-          <Select v-model="selectedKbId">
-        <SelectTrigger class="w-[200px]">
-          <SelectValue>
-            <span v-if="!selectedKbId">Select Knowledge Base</span>
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          <template v-if="knowledgeBases.length">
-            <SelectItem v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
-              {{ kb.name }}
-            </SelectItem>
-          </template>
-          <template v-else>
-            <SelectItem disabled value="no-data">
-              {{ 'No knowledge base available' }}
-            </SelectItem>
-          </template>
-        </SelectContent>
-      </Select>
+                  <Select v-model="selectedKbId">
+                    <SelectTrigger class="w-[200px]">
+                      <SelectValue>
+                        <span v-if="!selectedKbId">Select Knowledge Base</span>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <template v-if="knowledgeBases.length">
+                        <SelectItem v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+                          {{ kb.name }}
+                        </SelectItem>
+                      </template>
+                      <template v-else>
+                        <SelectItem disabled value="no-data">
+                          {{ 'No knowledge base available' }}
+                        </SelectItem>
+                      </template>
+                    </SelectContent>
+                  </Select>
 
 
-          <Button variant="outline" size="icon">
-            <Paperclip class="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon">
-            <Sparkles class="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon">
-            <Settings class="h-4 w-4" />
-          </Button>
-        </div>
+                  <Button variant="outline" size="icon">
+                    <Paperclip class="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon">
+                    <Sparkles class="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon">
+                    <Settings class="h-4 w-4" />
+                  </Button>
+                </div>
 
-        <Button
-          size="default"
-          class="h-10 px-4"
-          :disabled="!inputMessage.trim() || isLoading"
-          @click="sendMessage"
-        >
-          <template v-if="isLoading">
-            <Loader2 class="h-5 w-5 mr-2 animate-spin" />
-            Sending...
-          </template>
-          <template v-else>
-            <SendHorizontal class="h-5 w-5 mr-2" />
-            Send
-          </template>
-        </Button>
-      </div>
-    </div>
-  </div>
-</ResizablePanel>
+                <Button size="default" class="h-10 px-4" :disabled="!inputMessage.trim() || isLoading"
+                  @click="sendMessage">
+                  <template v-if="isLoading">
+                    <Loader2 class="h-5 w-5 mr-2 animate-spin" />
+                    Sending...
+                  </template>
+                  <template v-else>
+                    <SendHorizontal class="h-5 w-5 mr-2" />
+                    Send
+                  </template>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </ResizablePanel>
       </ResizablePanelGroup>
     </ResizablePanel>
   </ResizablePanelGroup>
@@ -235,6 +255,43 @@ const knowledgeBases = ref<KnowledgeBase[]>([])
 const selectedKbId = ref<number>()
 const isKbListLoading = ref(false)
 const isLoading = ref(false); // Added for loading state
+
+
+
+
+// 引用文档的处理逻辑
+
+// 在组件中添加以下方法
+const formatMetadataSource = (metadata: Record<string, any>) => {
+  return metadata.filename || metadata.source?.split('/').pop() || 'Unknown source'
+}
+
+const shouldDisplayField = (key: string, value: any) => {
+  const hiddenFields = ['content', 'filename', 'source']
+  return !hiddenFields.includes(key) && value !== undefined && value !== ''
+}
+
+const formatFieldName = (key: string) => {
+  const nameMap: Record<string, string> = {
+    last_modified: 'Last Modified',
+    doc_id: 'Document ID'
+  }
+  return nameMap[key] || key.replace(/_/g, ' ')
+}
+
+const formatFieldValue = (key: string, value: any) => {
+  if (key === 'last_modified') {
+    return new Date(value * 1000).toLocaleString()
+  }
+  if (typeof value === 'object') return JSON.stringify(value)
+  return value
+}
+
+const truncateContent = (content: string, maxLength = 2500) => {
+  return content.length > maxLength ? content.slice(0, maxLength) + '...' : content
+}
+
+
 
 
 
@@ -311,16 +368,16 @@ const handleKeydown = async (event: KeyboardEvent) => {
   if (event.key === 'Enter' && !event.isComposing) {
     if (event.ctrlKey || event.metaKey || event.shiftKey) {
       event.preventDefault()
-      
+
       // 插入换行符
-      inputMessage.value = 
+      inputMessage.value =
         inputMessage.value.slice(0, startPos) +
         '\n' +
         inputMessage.value.slice(endPos)
 
       // 等待DOM更新
       await nextTick()
-      
+
       // 设置新光标位置
       textarea.selectionStart = textarea.selectionEnd = startPos + 1
       textarea.focus()
@@ -351,10 +408,10 @@ const newConversation = () => {
     lastTime: new Date(),
     messages: [] // 明确初始化
   }
-  
+
   conversations.value.push(newConvo)
   activeIndex.value = conversations.value.length - 1
-  
+
   // 滚动到最新对话
   nextTick(() => {
     const container = document.querySelector('[data-radix-scroll-area-viewport]')
@@ -432,24 +489,24 @@ const sendMessage = async () => {
     let animationFrameId: number | null = null
 
     await apiMedicalRag.streamQuery(
-      { 
+      {
         question: inputMessage.value,
-        kb_id: selectedKbId.value 
+        kb_id: selectedKbId.value
       },
       {
         onData: (delta) => {
           buffer += delta
-          
+
           // 使用 requestAnimationFrame 批量更新
           if (!animationFrameId) {
             animationFrameId = requestAnimationFrame(() => {
               // 更新内容并触发响应式更新
               assistantMessage.content = buffer
               assistantMessage._updateFlag++
-              
+
               // 强制更新消息数组
               currentConvo.messages = [...currentConvo.messages]
-              
+
               smartScroll()
               animationFrameId = null
             })
@@ -462,12 +519,6 @@ const sendMessage = async () => {
           assistantMessage.metadata.references = references
           currentConvo.messages = [...currentConvo.messages]
           smartScroll(true)
-
-          // assistantMessage.metadata = {
-          //   references,
-          //   // kb_id: currentKb.id,
-          //   vector_path: currentKb.vector_storage_path
-          // }
           isLoading.value = false;
         },
         onError: (error) => {
@@ -497,10 +548,10 @@ const smartScroll = (force = false) => {
     const container = document.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement
     if (container) {
       const threshold = 100 // 像素容差
-      const isNearBottom = 
-        container.scrollTop + container.clientHeight >= 
+      const isNearBottom =
+        container.scrollTop + container.clientHeight >=
         container.scrollHeight - threshold
-      
+
       if (force || isNearBottom) {
         container.scrollTo({
           top: container.scrollHeight,
@@ -555,71 +606,90 @@ const formatTime = (date: Date) =>
 }
 
 .markdown-body-1 {
-  font-size: 0.8125rem;  /* 13px (原14px) */
-  line-height: 1.6;      /* 增加行高补偿字号缩小 */
+  font-size: 0.8125rem;
+  /* 13px (原14px) */
+  line-height: 1.6;
+  /* 增加行高补偿字号缩小 */
 
   /* 标题层级调整 */
   h1 {
-    font-size: 1.4em;    /* 18.2px (原21px) */
+    font-size: 1.4em;
+    /* 18.2px (原21px) */
     line-height: 1.3;
     margin-bottom: 2px;
   }
-  
+
   h2 {
-    font-size: 1.25em;   /* 16.25px (原19.25px) */
+    font-size: 1.25em;
+    /* 16.25px (原19.25px) */
     line-height: 1.35;
     margin-bottom: 2px;
     margin-top: 2px;
   }
 
   h3 {
-    font-size: 1.15em;   /* 14.95px (原17.5px) */
+    font-size: 1.15em;
+    /* 14.95px (原17.5px) */
     line-height: 1.4;
     margin-bottom: 2px;
     margin-top: 2px;
   }
 
   h4 {
-    font-size: 1.05em;   /* 14.95px (原17.5px) */
+    font-size: 1.05em;
+    /* 14.95px (原17.5px) */
     line-height: 1.4;
     margin-bottom: 2px;
     margin-top: 2px;
   }
 
   /* 正文及列表 */
-  p, li {
-    font-size: 0.8125em; /* 10.56px (原12.25px) */
-    line-height: 1.7;    /* 增加行高提升可读性 */
-    margin-bottom: 4px;/* 增加段落间距 */
+  p,
+  li {
+    font-size: 0.8125em;
+    /* 10.56px (原12.25px) */
+    line-height: 1.7;
+    /* 增加行高提升可读性 */
+    margin-bottom: 4px;
+    /* 增加段落间距 */
   }
 
   /* 代码块三级调整 */
   pre code {
-    font-size: 0.75rem;  /* 12px (原13px) */
+    font-size: 0.75rem;
+    /* 12px (原13px) */
     line-height: 1.5;
-    padding: 0.8em;      /* 增加内间距 */
+    padding: 0.8em;
+    /* 增加内间距 */
   }
 
   /* 行内代码适配 */
   code:not(pre code) {
-    font-size: 0.75rem;  /* 12px (原13px) */
+    font-size: 0.75rem;
+    /* 12px (原13px) */
     padding: 0.15em 0.3em;
-    vertical-align: 0.05em; /* 对齐优化 */
+    vertical-align: 0.05em;
+    /* 对齐优化 */
   }
 
   /* 表格紧凑优化 */
   table {
-    font-size: 0.75rem;  /* 12px (原13px) */
-    th, td {
+    font-size: 0.75rem;
+
+    /* 12px (原13px) */
+    th,
+    td {
       padding: 0.4em 0.6em;
     }
+
     margin-bottom: 2px;
     margin-top: 2px;
   }
 
   /* 引用块调整 */
   blockquote {
-    font-size: 0.75rem;  /* 12px (原14px) */
+    font-size: 0.75rem;
+    /* 12px (原14px) */
     padding: 0.5em 1em;
     border-left-width: 3px;
   }
@@ -630,5 +700,19 @@ const formatTime = (date: Date) =>
 .bg-primary.text-primary-foreground {
   font-size: 0.875rem;
   /* 同步基础字号 */
+}
+
+/* 添加以下样式 */
+.prose-sm pre {
+  padding: 0.75rem;
+  background-color: hsl(var(--muted)) !important;
+  border-radius: 0.5rem;
+}
+
+.prose-sm code:not(pre code) {
+  padding: 0.2rem 0.4rem;
+  background-color: hsl(var(--accent));
+  border-radius: 0.25rem;
+  font-size: 0.75em;
 }
 </style>

@@ -1,5 +1,8 @@
 services:
   api: &main_app
+    ports:
+      # Exposes application port.
+      - "9090:8000"
     build:
       context: .
       dockerfile: ./Dockerfile
@@ -8,7 +11,7 @@ services:
     env_file:
       - .env
     volumes:
-      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt
+      - .:/app/src/
     depends_on:
       db:
         condition: service_healthy
@@ -20,14 +23,18 @@ services:
       MED_RAG_SERVER_DB_PASS: med_rag_server
       MED_RAG_SERVER_DB_BASE: med_rag_server
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      MED_RAG_SERVER_RELOAD: "True"
 
-  taskiq-worker:
-    <<: *main_app
-    labels: []
-    command:
-      - taskiq
-      - worker
-      - med_rag_server.tkq:broker
+  # taskiq-worker:
+  #   # <<: *main_app
+  #   image: med_rag_server:${MED_RAG_SERVER_VERSION:-latest}
+  #   depends_on:
+  #     - api
+  #   labels: []
+  #   command:
+  #     - taskiq
+  #     - worker
+  #     - med_rag_server.tkq:broker
 
   db:
     image: postgres:16.3-bullseye
@@ -53,9 +60,9 @@ services:
     container_name: prefect-server  # 可选，但建议命名容器方便管理
     hostname: prefect-server
     ports:
-      - "9099:4200" 
+      - "9092:4200" 
     command: >
-      sh -c "prefect config set PREFECT_API_URL='http://127.0.0.1:9099/api' &&
+      sh -c "prefect config set PREFECT_API_URL='http://127.0.0.1:9092/api' &&
       prefect server start --host 0.0.0.0"
     # --port 9092
     restart: always         # 自动重启策略（可选）
