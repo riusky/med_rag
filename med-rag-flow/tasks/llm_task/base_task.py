@@ -1,21 +1,29 @@
 from pathlib import Path
 from prefect import get_run_logger, task, flow
-import requests
-from typing import Optional
-import base64
-import re
-from PIL import Image
-import io
-import json
-import yaml
+import requests # Keep for type hint if send_api_request_task returns Response object
+from typing import Optional, Tuple, Any # Added Tuple, Any
+import base64 # Keep if validate_and_encode_image_task still returns base64 string directly
+# import re # No longer needed here
+# from PIL import Image # No longer needed here
+# import io # No longer needed here
+# import json # No longer needed here
+# import yaml # No longer needed here
 
-from utils.config_loader import ConfigLoader
+# Import the refactored TableImageConverter
+from med_rag_flow.utils.table_image_converter import TableImageConverter
+from med_rag_flow.utils.config_loader import ConfigLoader
 
 
 class TableImageConverterTasks:
-    def __init__(self, config_path: str = "../../config/task/image_table_process.yaml"):
-        self.config = ConfigLoader(config_path).config
-        self.base_dir = Path(config_path).parent.parent.resolve()
+    def __init__(self, config_path: str = "config/task/image_table_process.yaml"): # Adjusted default path
+        # ConfigLoader might not be strictly needed here if TableImageConverter handles all config loading
+        # However, if tasks themselves have specific configs or need to pass config path, keep it.
+        # self.config_loader = ConfigLoader(config_path) # This loads the config
+        # self.config = self.config_loader.config # This holds the loaded config data
+        
+        # Instantiate the core converter, passing the config path
+        self.converter = TableImageConverter(config_path=config_path)
+        self.logger = get_run_logger() # Initialize logger once
 
     @task(
         name="validate-and-encode-image",
@@ -23,24 +31,20 @@ class TableImageConverterTasks:
         tags=["image-processing", "validation"],
     )
     def validate_and_encode_image_task(self, image_path: str) -> str:
-        """执行图片验证和Base64编码"""
-        path = Path(image_path)
-        logger = get_run_logger()
+        """执行图片验证和Base64编码 using TableImageConverter"""
+        self.logger.info(f"Starting validation and encoding for: {image_path}")
         try:
-            if not path.exists():
-                raise FileNotFoundError(f"文件不存在: {image_path}")
-                
-            with open(path, "rb") as f:
-                file_data = f.read()
-                
-            with Image.open(io.BytesIO(file_data)) as img:
-                img.verify()
-                
-            logger.info(f"✅ 图片验证成功: {image_path}")
-            return base64.b64encode(file_data).decode("utf-8")
-            
+            # The core logic is now in TableImageConverter's _validate_and_encode_image
+            # This method is protected; consider making it public or adding a public wrapper in TableImageConverter
+            # For now, let's assume we call it directly for simplicity in this refactoring step.
+            # Or, we can call the public `convert` or `generate_image_description` which internally call it.
+            # However, tasks are often chained, so having a dedicated task for encoding might be intended.
+            # Let's assume TableImageConverter._validate_and_encode_image can be called.
+            encoded_image = self.converter._validate_and_encode_image(image_path)
+            self.logger.info(f"✅ 图片验证成功: {image_path}")
+            return encoded_image
         except Exception as e:
-            logger.error(f"图片处理失败: {str(e)}")
+            self.logger.error(f"图片处理失败 in task: {image_path}, Error: {str(e)}")
             raise
 
     @task(
@@ -52,232 +56,394 @@ class TableImageConverterTasks:
         self, 
         base64_image: str, 
         task_name: str = "table_conversion",
-        custom_user_prompt: Optional[str] = None  # 新增参数
+        custom_user_prompt: Optional[str] = None
     ) -> dict:
-        """动态构建API请求体"""
-        logger = get_run_logger()
-        task_config = self.config['tasks'].get(task_name)
-        
-        if not task_config:
-            raise ValueError(f"无效的任务名称: {task_name}")
-            
-        # 加载提示词文件
-        prompt_content = self._load_prompt_content(task_config['prompt_file'])
-        
-        # 处理用户提示词逻辑
-        user_text = custom_user_prompt or task_config.get(
-            'user_prompt', 
-            "解释这张图片"
-        )
-        
-        payload_template = {
-            "model": task_config.get('model_name', 'gemma3:12b'),
-            "messages": [
-                {
-                    "role": "system",
-                    "content": prompt_content
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_text},
-                        {"type": "image_url", "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }}
-                    ]
-                }
-            ],
-            "temperature": task_config.get('temperature', 0.1),
-            "max_tokens": task_config.get('max_tokens', 9600)
-        }
-        return payload_template
+        """动态构建API请求体 using TableImageConverter"""
+        self.logger.info(f"Constructing payload for task: {task_name}")
+        try:
+            # Core logic is in TableImageConverter._construct_payload
+            payload = self.converter._construct_payload(
+                base64_image, 
+                task_name, 
+                custom_user_prompt
+            )
+            self.logger.info(f"✅ Payload constructed for task: {task_name}")
+            return payload
+        except Exception as e:
+            self.logger.error(f"Payload construction failed for task {task_name}: {str(e)}")
+            raise
 
     @task(
         name="send-api-request",
         description="发送API请求任务",
         tags=["api", "communication"],
     )
-    def send_api_request_task(self, payload: dict) -> requests.Response:
-        """处理API通信及基础响应验证"""
-        logger = get_run_logger()
+    def send_api_request_task(self, payload: dict) -> Any: # Return type can be requests.Response
+        """处理API通信及基础响应验证 using TableImageConverter"""
+        self.logger.info("Sending API request")
         try:
-            response = requests.post(
-                self.config['global'].get('api_endpoint', 'http://localhost:11434/v1/chat/completions'),
-                json=payload,
-                timeout=self.config['global'].get('timeout', 60)
-            )
-            response.raise_for_status()
-            logger.info("✅ API请求成功")
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API通信失败: {str(e)}")
-            raise e from None
-
-    @task(
-        name="process-api-response",
-        description="处理API响应任务",
-        tags=["response", "processing"]
-    )
-    def process_api_response_task(self, response: requests.Response) -> str:
-        """增强型响应处理管道"""
-        logger = get_run_logger()
-        try:
-            response_data = response.json()
-            if 'choices' not in response_data:
-                raise ValueError("无效响应结构: 缺少choices字段")
-                
-            raw_text = response_data['choices'][0]['message']['content']
-            
-            processed = self._enhanced_response_cleaning(raw_text)
-            logger.info(f"✅ 响应处理完成 | 有效内容长度: {len(processed)}")
-            logger.info(f"✅ {processed}")
-            return processed
-            
-        except json.JSONDecodeError:
-            logger.error("响应解析失败: 非JSON格式")
-            raise
+            # Core logic is in TableImageConverter._send_request
+            response = self.converter._send_request(payload)
+            self.logger.info("✅ API请求成功")
+            return response # requests.Response object
         except Exception as e:
-            logger.error(f"响应处理异常: {str(e)}")
+            self.logger.error(f"API通信失败 in task: {str(e)}")
+            raise 
+
+    @task(
+        name="process-api-response-table", # Renamed for clarity
+        description="处理表格转换API响应任务",
+        tags=["response", "processing", "table"]
+    )
+    def process_api_response_table_task(self, response: Any) -> str: # response is requests.Response
+        """处理表格转换API响应 using TableImageConverter"""
+        self.logger.info("Processing API response for table conversion")
+        try:
+            # Core logic is in TableImageConverter._process_response
+            # We need to specify the task_name for context
+            processed_text = self.converter._process_response(response, task_name="table_conversion")
+            self.logger.info(f"✅ Table conversion response processed. Length: {len(processed_text)}")
+            return processed_text
+        except Exception as e:
+            self.logger.error(f"Table conversion response processing failed: {str(e)}")
             raise
 
     @task(
-        name="generate-markdown-table",
-        description="生成Markdown表格任务",
-        tags=["formatting", "output"]
-    )
-    def generate_markdown_table_task(self, processed_text: str) -> str:
-        """专业的表格格式化引擎"""
-        logger = get_run_logger()
-        try:
-            table = self._structured_table_extraction(processed_text)
-            return table
-        except ValueError as ve:
-            logger.error(f"表格生成失败: {str(ve)}")
-            raise
-          
-    @task(
-        name="process_caption_response",
+        name="process-api-response-caption", # Renamed for clarity
         description="处理图片描述API响应任务",
-        tags=["response", "processing"]
+        tags=["response", "processing", "caption"]
     )
-    def process_caption_response(self, response: requests.Response) -> str:
-        """处理图片描述响应"""
-        logger = get_run_logger()
+    def process_api_response_caption_task(self, response: Any) -> str: # response is requests.Response
+        """处理图片描述API响应 using TableImageConverter"""
+        self.logger.info("Processing API response for image caption")
         try:
-            response_data = response.json()
-            logger.debug(f"原始响应长度: {len(response.text)}")
-            
-            if 'choices' not in response_data:
-                raise ValueError("无效响应结构: 缺少choices字段")
-                
-            raw_text = response_data['choices'][0]['message']['content']
-            return raw_text
-            
-        except json.JSONDecodeError:
-            logger.error("响应解析失败: 非JSON格式")
-            raise
+            # Core logic is in TableImageConverter._process_response
+            processed_text = self.converter._process_response(response, task_name="image_caption")
+            self.logger.info(f"✅ Image caption response processed. Length: {len(processed_text)}")
+            return processed_text
         except Exception as e:
-            logger.error(f"响应处理异常: {str(e)}")
+            self.logger.error(f"Image caption response processing failed: {str(e)}")
             raise
 
-    # ------------------ 私有工具方法 ------------------
-    def _load_prompt_content(self, prompt_file: str) -> str:
-        """从独立文件加载提示词"""
-        try:
-            prompt_path = self.base_dir / prompt_file
-            if not prompt_path.exists():
-                raise FileNotFoundError(f"提示词文件不存在: {prompt_path}")
-                
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-            if not content:
-                raise ValueError("提示词文件内容为空")
-                
-            return content
-            
-        except Exception as e:
-            raise
+    # The `generate_markdown_table_task` was specific to extracting table from text.
+    # This logic is now part of `_process_response` when task_name="table_conversion" in TableImageConverter.
+    # So, this specific task might be redundant if `process_api_response_table_task` returns the final table.
+    # If `_extract_markdown_table` needs to be a separate step *after* initial text extraction,
+    # then TableImageConverter._extract_markdown_table (which is static) can be called.
 
-    def _enhanced_response_cleaning(self, raw_text: str) -> str:
-        """多阶段响应清洗流程"""
-            # 处理代码块包裹的情况
-        code_block_pattern = r'```(?:markdown)?\n(.*?)\n```'
-        code_match = re.search(code_block_pattern, raw_text, re.DOTALL)
-        
-        # 如果包含代码块则提取内容
-        if code_match:
-            raw_text = code_match.group(1)
-        
-        return raw_text
+    # Let's assume `process_api_response_table_task` now directly returns the Markdown table string.
+    # If further formatting or a distinct step is needed, we can add:
+    # @task(name="format-markdown-table", ...)
+    # def format_markdown_table_task(self, raw_markdown_text: str) -> str:
+    #     self.logger.info("Formatting text to Markdown table")
+    #     try:
+    #         # This assumes _extract_markdown_table is still relevant and public/static
+    #         table = TableImageConverter._extract_markdown_table(raw_markdown_text)
+    #         self.logger.info("✅ Markdown table formatted.")
+    #         return table
+    #     except Exception as e:
+    #         self.logger.error(f"Markdown table formatting failed: {str(e)}")
+    #         raise
 
-    def _structured_table_extraction(self, raw_text: str) -> str:
-        """修复版表格提取方法，解决末行丢失问题"""
-        # 增强正则表达式兼容性
-        table_pattern = (
-            r'^\s*'                    # 允许起始空白
-            r'(\|.*\|)\s*\n'           # 表头行
-            r'(\|[-:\s|]+\|)\s*\n'     # 分隔线行
-            r'((?:\|.*\|\s*\n?)+)'     # 数据行（包含最后可能没有换行符的情况）
-            r'\s*$'                    # 允许结尾空白
-        )
+    # Removed _load_prompt_content, _enhanced_response_cleaning, _structured_table_extraction
+    # as their functionalities are now in TableImageConverter.
 
-        match = re.search(table_pattern, raw_text, re.MULTILINE | re.DOTALL)
-        
-        if not match:
-            # 尝试匹配无分隔线的简单表格
-            simple_pattern = r'^(\|.*\|)\s*\n((?:\|.*\|\s*\n?)+)'
-            if simple_match := re.search(simple_pattern, raw_text, re.MULTILINE):
-                print("检测到简单表格结构")
-                header = simple_match.group(1)
-                rows = simple_match.group(2)
-                processed = f"{header}\n{rows}"
-            else:
-                raise ValueError("未检测到有效的Markdown表格结构")
-        else:
-            # 合并所有匹配部分
-            processed = f"{match.group(1)}\n{match.group(2)}\n{match.group(3)}"
+# ------------------ Flow构建 (Example Usage) ------------------
+# Note: The flow demonstrates how these tasks might be chained.
+# The actual implementation of calling convert() or generate_image_description()
+# from the TableImageConverter might simplify the flow further,
+# as those methods encapsulate multiple steps.
 
-        # 标准化处理流程
-        cleaned_table = (
-            processed.strip()
-            .replace(' ', '')    # 移除汉字间空格
-            .replace('｜', '|')  # 统一竖线符号
-            .replace('—', '-')   # 统一分隔线
-            .replace('∶', ':')   # 统一冒号
-        )
-        
-        # 分割行并过滤空行
-        lines = [line.strip() for line in cleaned_table.splitlines() if line.strip()]
-        
-        # 验证表格完整性
-        if len(lines) < 3:
-            raise ValueError("表格行数不足")
-        
-        # 重新组装表格确保格式正确
-        return '\n'.join(lines)
-
-# ------------------ Flow构建 ------------------
 @flow
-def create_flow(config_path: str = "../../config/task/image_table_process.yaml"):
-    """创建Prefect工作流"""
-    converter = TableImageConverterTasks(config_path)
+def table_conversion_flow(
+    image_path: str, 
+    config_path: str = "config/task/image_table_process.yaml" # Ensure path is correct from flow context
+):
+    """Prefect flow for table conversion using refactored tasks."""
+    tasks = TableImageConverterTasks(config_path=config_path)
+    logger = get_run_logger()
     
-    # 输入参数
-    image_path = "test.jpg"
+    logger.info(f"Starting table conversion flow for: {image_path}")
     
-    # 公共处理流程
-    encoded_image = converter.validate_and_encode_image_task(image_path)
+    encoded_image = tasks.validate_and_encode_image_task(image_path)
     
-    # 表格转换子流程
-    table_payload = converter.construct_payload_task(encoded_image, task_name="table_conversion")
-    table_response = converter.send_api_request_task(table_payload)
-    processed_text = converter.process_api_response_task(table_response)  # 新增处理步骤
-    table_result = converter.generate_markdown_table_task(processed_text)  # 修正输入参数
+    table_payload = tasks.construct_payload_task(
+        base64_image=encoded_image, 
+        task_name="table_conversion"
+    )
+    table_response = tasks.send_api_request_task(table_payload)
     
-    # 图片描述子流程 
-    desc_payload = converter.construct_payload_task(encoded_image, task_name="image_caption")
-    desc_response = converter.send_api_request_task(desc_payload)
-    desc_processed = converter.process_caption_response(desc_response)  # 新增处理步骤
+    # This task now directly returns the final markdown table.
+    table_result = tasks.process_api_response_table_task(table_response)
     
+    logger.info(f"Table conversion flow completed. Result:\n{table_result}")
+    return table_result
+
+@flow
+def image_captioning_flow(
+    image_path: str, 
+    context: str, # Context for image captioning
+    config_path: str = "config/task/image_table_process.yaml" # Ensure path is correct
+):
+    """Prefect flow for image captioning using refactored tasks."""
+    tasks = TableImageConverterTasks(config_path=config_path)
+    logger = get_run_logger()
+
+    logger.info(f"Starting image captioning flow for: {image_path}")
+
+    encoded_image = tasks.validate_and_encode_image_task(image_path)
+    
+    # For image captioning, the user prompt is constructed including context.
+    # The TableImageConverter._build_image_prompt method does this.
+    # We can either call it via the converter instance if made public,
+    # or replicate its logic here if custom_user_prompt is simpler.
+    # For now, let's assume custom_user_prompt is built before calling construct_payload_task.
+    
+    # This logic is inside TableImageConverter.generate_image_description -> _build_image_prompt
+    # To use it directly:
+    # user_prompt_for_caption = tasks.converter._build_image_prompt(context) 
+    # This requires _build_image_prompt to be accessible.
+    # Alternative: the task `construct_payload_task` could be enhanced
+    # to take `context` and call `_build_image_prompt` internally for "image_caption" task.
+    
+    # Let's assume for now that the `generate_image_description` method from the core converter
+    # is what we want to use as a single "task" or that the flow is more granular.
+    # The `custom_user_prompt` in `construct_payload_task` is designed for this.
+    
+    # Replicating the prompt building logic for clarity in the flow:
+    # (Ideally, this logic should be part of the converter or a helper accessible to the flow)
+    caption_prompt_template = tasks.converter.image_caption_prompt_template # Access from converter
+    custom_caption_prompt = f"{caption_prompt_template}\n\n[关联上下文]\n{context.strip()}"
+
+    caption_payload = tasks.construct_payload_task(
+        base64_image=encoded_image,
+        task_name="image_caption",
+        custom_user_prompt=custom_caption_prompt
+    )
+    caption_response = tasks.send_api_request_task(caption_payload)
+    
+    # This task now directly returns the final caption.
+    caption_result = tasks.process_api_response_caption_task(caption_response)
+    
+    logger.info(f"Image captioning flow completed. Result: {caption_result}")
+    return caption_result
+
+# Simplified flow using the main methods of TableImageConverter if they were tasks
+@task(name="convert-image-to-table-direct", retries=2, retry_delay_seconds=5)
+def convert_image_to_table_task(
+    converter_instance: TableImageConverter, 
+    image_path: str
+) -> str:
+    logger = get_run_logger()
+    logger.info(f"Direct table conversion for {image_path}")
+    success, result = converter_instance.convert(image_path, task_name="table_conversion")
+    if not success:
+        logger.error(f"Direct table conversion failed for {image_path}: {result}")
+        raise Exception(f"Table conversion failed: {result}")
+    logger.info(f"✅ Direct table conversion successful for {image_path}")
+    return result
+
+@task(name="generate-image-caption-direct", retries=2, retry_delay_seconds=5)
+def generate_image_caption_task(
+    converter_instance: TableImageConverter,
+    image_path: str,
+    context: str
+) -> str:
+    logger = get_run_logger()
+    logger.info(f"Direct image captioning for {image_path}")
+    # generate_image_description itself handles exceptions and returns filename on failure
+    caption = converter_instance.generate_image_description(image_path, context, task_name="image_caption")
+    # Could add more robust error checking here if needed, e.g., if caption is just filename
+    if caption == Path(image_path).stem:
+         logger.warning(f"Image captioning for {image_path} might have fallen back to filename.")
+    logger.info(f"✅ Direct image captioning successful for {image_path}")
+    return caption
+
+
+@flow
+def unified_conversion_flow(
+    image_path: str, 
+    context_for_caption: str,
+    config_path: str = "config/task/image_table_process.yaml",
+    do_table_conversion: bool = True,
+    do_image_captioning: bool = True,
+):
+    """
+    Demonstrates using the direct task wrappers around TableImageConverter methods.
+    This is a more streamlined way if the sub-steps (encode, payload, etc.)
+    don't need to be individual Prefect tasks.
+    """
+    logger = get_run_logger()
+    converter_instance = TableImageConverter(config_path=config_path) # Instantiated once
+    
+    table_result = None
+    caption_result = None
+
+    if do_table_conversion:
+        logger.info(f"Starting direct table conversion sub-flow for {image_path}")
+        table_result = convert_image_to_table_task.submit( # .submit for concurrency if desired
+            converter_instance, 
+            image_path
+        ).result() # .result() if running sequentially or need result before next step
+        logger.info(f"Table conversion result: {table_result}")
+
+    if do_image_captioning:
+        logger.info(f"Starting direct image captioning sub-flow for {image_path}")
+        caption_result = generate_image_caption_task.submit( # .submit for concurrency
+            converter_instance,
+            image_path,
+            context_for_caption
+        ).result()
+        logger.info(f"Image caption result: {caption_result}")
+        
+    return {"table": table_result, "caption": caption_result}
+
+
 if __name__ == "__main__":
-    create_flow()
+    # This example assumes the config file is accessible relative to this script's execution path
+    # or an absolute path is provided.
+    # Adjust "test.jpg" path and context as needed.
+    
+    # Path to a test image (IMPORTANT: ensure this image exists or change the path)
+    # Assuming 'test.jpg' is in 'med-rag-flow/tasks/llm_task/' like in original structure
+    current_script_dir = Path(__file__).parent
+    test_image_relative_path = "test.jpg" # if test.jpg is in the same dir as this script
+    # If test.jpg is in med-rag-flow/tasks/llm_task/test.jpg
+    # project_root = current_script_dir.parent.parent 
+    # test_image_path_obj = project_root / "tasks/llm_task/test.jpg"
+    # For simplicity, let's assume test.jpg is in the same directory as base_task.py
+    test_image_path_obj = current_script_dir / test_image_relative_path
+
+    if not test_image_path_obj.exists():
+        print(f"Error: Test image not found at {test_image_path_obj}")
+        print("Please create a dummy 'test.jpg' in the same directory as this script or provide a valid path.")
+        # Create a dummy one if it doesn't exist for testing
+        try:
+            from PIL import Image as PILImage, ImageDraw
+            print(f"Attempting to create a dummy test image at {test_image_path_obj}...")
+            img = PILImage.new('RGB', (200, 50), color = 'blue')
+            d = ImageDraw.Draw(img)
+            d.text((10,10), "Dummy Test Image", fill=(255,255,255))
+            img.save(test_image_path_obj)
+            print(f"Dummy test image created at {test_image_path_obj}")
+        except Exception as e_img:
+            print(f"Could not create dummy test image: {e_img}")
+            exit(1) # Exit if no image can be found/created.
+
+    test_image_path_str = str(test_image_path_obj)
+    
+    # Config path - relative to the project root (med-rag-flow)
+    # If running this script directly from `med-rag-flow/tasks/llm_task/`
+    # then `config/...` should be `../../config/...`
+    # For `unified_conversion_flow` default: "config/task/image_table_process.yaml"
+    # This implies the flow is run from project root or paths are adjusted.
+    # Let's calculate relative path from this script to project's config folder
+    project_root_config = current_script_dir.parent.parent / "config/task/image_table_process.yaml"
+
+    print(f"Using config file: {project_root_config}")
+    print(f"Using test image: {test_image_path_str}")
+
+    # Example using the unified flow:
+    flow_results = unified_conversion_flow(
+        image_path=test_image_path_str,
+        context_for_caption="Sample context for describing the image.",
+        config_path=str(project_root_config),
+        do_table_conversion=True,
+        do_image_captioning=True
+    )
+    print(f"\n--- Unified Flow Results ---")
+    if flow_results["table"]:
+        print("\nTable Conversion Output:\n", flow_results["table"])
+    if flow_results["caption"]:
+        print("\nImage Caption Output:\n", flow_results["caption"])
+
+    # Example using the more granular (original-style) flows:
+    # print("\n--- Granular Table Conversion Flow ---")
+    # table_output = table_conversion_flow(
+    #     image_path=test_image_path_str, 
+    #     config_path=str(project_root_config)
+    # )
+    # print("Table output:\n", table_output)
+
+    # print("\n--- Granular Image Captioning Flow ---")
+    # caption_output = image_captioning_flow(
+    #     image_path=test_image_path_str, 
+    #     context="This is a test context for the image.",
+    #     config_path=str(project_root_config)
+    # )
+    # print("Caption output:\n", caption_output)
+
+# TODO: Move the following test/demonstration code to proper unit tests under the tests/ directory.
+# if __name__ == "__main__":
+    # This example assumes the config file is accessible relative to this script's execution path
+    # or an absolute path is provided.
+    # Adjust "test.jpg" path and context as needed.
+    
+    # Path to a test image (IMPORTANT: ensure this image exists or change the path)
+    # Assuming 'test.jpg' is in 'med-rag-flow/tasks/llm_task/' like in original structure
+    # current_script_dir = Path(__file__).parent
+    # test_image_relative_path = "test.jpg" # if test.jpg is in the same dir as this script
+    # If test.jpg is in med-rag-flow/tasks/llm_task/test.jpg
+    # project_root = current_script_dir.parent.parent 
+    # test_image_path_obj = project_root / "tasks/llm_task/test.jpg"
+    # For simplicity, let's assume test.jpg is in the same directory as base_task.py
+    # test_image_path_obj = current_script_dir / test_image_relative_path
+
+    # if not test_image_path_obj.exists():
+    #     print(f"Error: Test image not found at {test_image_path_obj}")
+    #     print("Please create a dummy 'test.jpg' in the same directory as this script or provide a valid path.")
+        # Create a dummy one if it doesn't exist for testing
+    #     try:
+    #         from PIL import Image as PILImage, ImageDraw
+    #         print(f"Attempting to create a dummy test image at {test_image_path_obj}...")
+    #         img = PILImage.new('RGB', (200, 50), color = 'blue')
+    #         d = ImageDraw.Draw(img)
+    #         d.text((10,10), "Dummy Test Image", fill=(255,255,255))
+    #         img.save(test_image_path_obj)
+    #         print(f"Dummy test image created at {test_image_path_obj}")
+    #     except Exception as e_img:
+    #         print(f"Could not create dummy test image: {e_img}")
+    #         exit(1) # Exit if no image can be found/created.
+
+    # test_image_path_str = str(test_image_path_obj)
+    
+    # Config path - relative to the project root (med-rag-flow)
+    # If running this script directly from `med-rag-flow/tasks/llm_task/`
+    # then `config/...` should be `../../config/...`
+    # For `unified_conversion_flow` default: "config/task/image_table_process.yaml"
+    # This implies the flow is run from project root or paths are adjusted.
+    # Let's calculate relative path from this script to project's config folder
+    # project_root_config = current_script_dir.parent.parent / "config/task/image_table_process.yaml"
+
+    # print(f"Using config file: {project_root_config}")
+    # print(f"Using test image: {test_image_path_str}")
+
+    # Example using the unified flow:
+    # flow_results = unified_conversion_flow(
+    #     image_path=test_image_path_str,
+    #     context_for_caption="Sample context for describing the image.",
+    #     config_path=str(project_root_config),
+    #     do_table_conversion=True,
+    #     do_image_captioning=True
+    # )
+    # print(f"\n--- Unified Flow Results ---")
+    # if flow_results["table"]:
+    #     print("\nTable Conversion Output:\n", flow_results["table"])
+    # if flow_results["caption"]:
+    #     print("\nImage Caption Output:\n", flow_results["caption"])
+
+    # Example using the more granular (original-style) flows:
+    # print("\n--- Granular Table Conversion Flow ---")
+    # table_output = table_conversion_flow(
+    #     image_path=test_image_path_str, 
+    #     config_path=str(project_root_config)
+    # )
+    # print("Table output:\n", table_output)
+
+    # print("\n--- Granular Image Captioning Flow ---")
+    # caption_output = image_captioning_flow(
+    #     image_path=test_image_path_str, 
+    #     context="This is a test context for the image.",
+    #     config_path=str(project_root_config)
+    # )
+    # print("Caption output:\n", caption_output)

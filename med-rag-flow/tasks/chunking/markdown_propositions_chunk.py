@@ -10,7 +10,11 @@ from typing import List, Dict, Any
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
-from tasks.helper_function import *
+# Updated imports:
+from med_rag_flow.utils.str_utils import replace_t_with_space
+from med_rag_flow.utils.file_utils import extract_text_from_markdown
+# from tasks.helper_function import * # Original import removed
+
 from prefect import task, get_run_logger
 from langchain_experimental.text_splitter import SemanticChunker
 import re
@@ -19,6 +23,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.output_parsers import StrOutputParser
 from json import loads
+
+from med_rag_flow.utils.config_loader import ConfigLoader # Added ConfigLoader import
 
 # 提示模板
 evaluation_prompt_template = """
@@ -55,37 +61,24 @@ class GeneratedPropositions(BaseModel):
     propositions: List[str]
     metadata: Dict[str, Any]
 
-@task(name="proposition")
-def propositions(
-    chunks: List[Document],
-    model: str = "deepseek-r1:1.5b",
-    temperature: float = 0,
-    max_retries: int = 3
-) -> List[Document]:
-    """
-    修复版命题生成，兼容未实现with_structured_output的环境
-    
-    改进点：
-    1. 自定义输出解析器
-    2. 增强格式容错处理
-    3. 保留元数据继承
-    """
-    logger = get_run_logger()
-    all_results = []
-    
-    # 初始化模型（移除结构化输出依赖）
-    llm = OllamaLLM(
-        model=model,
-        base_url="http://localhost:11434",
-        temperature=temperature,
-        num_predict=9600,
-    )
-    
-    for chunk in chunks:
-        def process_chunk():
-            try:
-                # 构建上下文提示词
-                prompt = f"""
+def _core_generate_propositions(
+    chunk: Document,
+    model_name: str, 
+    ollama_base_url: str, # Added ollama_base_url
+    temperature: float,
+    logger, 
+    evaluate_func 
+) -> Document:
+    """Core logic for generating propositions from a single chunk."""
+    try:
+        llm = OllamaLLM(
+            model=model_name,
+            base_url=ollama_base_url, # Use passed base_url
+            temperature=temperature,
+            num_predict=9600,
+        )
+        # 构建上下文提示词
+        prompt = f"""
 请将以下文本分解为简单、独立的小命题。生成的小命题要包含整个文本的内容。确保每个小命题符合以下标准：
 
 1. 表达单一事实：每个小命题应陈述一个特定的事实或主张。
@@ -110,102 +103,134 @@ def propositions(
 需要分解的文本:
 {chunk.page_content}
 """
-                # 生成响应
-                response = llm.invoke(prompt)
-                # 解析命题
-                cleaned_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
-                if not cleaned_response.strip() or "无法提取有效的命题" in cleaned_response:
-                    return copy.deepcopy(chunk)
-                   
-                lines = [line.strip() for line in cleaned_response.splitlines() if line.strip()]
-                processed_response = '\n'.join(lines)
-                print(processed_response)
-                # 克隆文档并更新内容
-                new_doc = copy.deepcopy(chunk)
-                new_doc.page_content = processed_response
-                
-                new_doc = evaluate_propositions(chunk,new_doc)
-                return new_doc
-                
-            except Exception as e:
-                logger.error(
-                    "分块处理异常 - 元数据: %s, 错误: %s", 
-                    chunk.metadata, 
-                    str(e)
-                )
-                raise
-        all_results.append(process_chunk())
-    return all_results
+        # 生成响应
+        response = llm.invoke(prompt)
+        # 解析命题
+        cleaned_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        if not cleaned_response.strip() or "无法提取有效的命题" in cleaned_response:
+            return copy.deepcopy(chunk)
+           
+        lines = [line.strip() for line in cleaned_response.splitlines() if line.strip()]
+        processed_response = '\n'.join(lines)
+        # print(processed_response) # Consider removing or using logger.debug
+        # 克隆文档并更新内容
+        new_doc = copy.deepcopy(chunk)
+        new_doc.page_content = processed_response
+        
+        # Call the core evaluation function directly
+        # Assuming default model and thresholds for evaluation if not passed explicitly
+        # This creates a dependency; consider if evaluate_func should be part of this core logic or separate
+        new_doc = evaluate_func( # Call to _core_evaluate_propositions
+            original_doc=chunk, 
+            generated_doc=new_doc, 
+            model_name=model_name, # Pass model_name
+            ollama_base_url=ollama_base_url, # Pass ollama_base_url
+            thresholds={"accuracy": 7, "clarity": 7, "completeness": 7, "conciseness": 7}, 
+            logger=logger
+        )
+        return new_doc
+        
+    except Exception as e:
+        logger.error(
+            "分块处理异常 - 元数据: %s, 错误: %s", 
+            chunk.metadata, 
+            str(e)
+        )
+        raise
 
-
-# ================== 质量评估模块 ==================  
-@task(name="proposition_evaluation")
-def evaluate_propositions(
-    original_doc: Document,
-    generated_doc: Document,
-    model: str = "deepseek-r1:1.5b",
-    thresholds: dict = {"accuracy": 7, "clarity": 7, "completeness": 7, "conciseness": 7}
-) -> Document:
+@task(name="proposition")
+def propositions(
+    chunks: List[Document],
+    model_name: Optional[str] = None, # Allow None to load from config
+    ollama_base_url: Optional[str] = None, # Allow None to load from config
+    temperature: float = 0,
+    config_path: str = "config/settings.yaml" # Path to settings config
+) -> List[Document]:
     """
-    全量命题整体评估版本
-    功能特点：
-    1. 直接对比完整原文和完整生成命题
-    2. 单次评估所有命题的整体质量
-    3. 阈值判断基于整体评分
+    Generates propositions for each chunk using an LLM.
+    Model name and Ollama base URL can be provided or loaded from config.
     """
     logger = get_run_logger()
+    
+    # Load configurations if not provided
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_proposition_model")
 
-    # 初始化Ollama模型
-    llm = OllamaLLM(
-        model=model,
-        base_url="http://localhost:11434",
-        temperature=0,
-        num_predict=4096,
-        format="json",
-    )
+    if not _ollama_base_url:
+        raise ValueError("Ollama base URL must be provided or configured in settings.yaml.")
+    if not _model_name:
+        raise ValueError("Model name must be provided or configured as default_proposition_model in settings.yaml.")
 
-    # 构建评估提示模板
-    evaluation_prompt = ChatPromptTemplate.from_messages([
-        ("system", evaluation_prompt_template),
-        ("human", """
+    all_results = []
+    for chunk in chunks:
+        processed_chunk = _core_generate_propositions(
+            chunk, 
+            model_name=_model_name, 
+            ollama_base_url=_ollama_base_url,
+            temperature=temperature, 
+            logger=logger,
+            evaluate_func=_core_evaluate_propositions 
+        )
+        all_results.append(processed_chunk)
+    return all_results
+
+# ================== 质量评估模块 ==================  
+
+def _core_evaluate_propositions(
+    original_doc: Document,
+    generated_doc: Document,
+    model_name: str, 
+    ollama_base_url: str, # Added ollama_base_url
+    thresholds: dict,
+    logger
+) -> Document:
+    """Core logic for evaluating propositions."""
+    try:
+        llm = OllamaLLM(
+            model=model_name,
+            base_url=ollama_base_url, # Use passed base_url
+            temperature=0,
+            num_predict=4096,
+            format="json",
+        )
+
+        evaluation_prompt = ChatPromptTemplate.from_messages([
+            ("system", evaluation_prompt_template),
+            ("human", """
 请整体评估以下命题集合：
 {proposition}
 
 对应的原始文本：
 {original_text}""")
-    ])
+        ])
 
-    # 评分模型
-    class CompositeScores(BaseModel):
-        accuracy: int
-        clarity: int
-        completeness: int
-        conciseness: int
+        class CompositeScores(BaseModel): # Keep Pydantic model local to where it's used or define globally if shared
+            accuracy: int
+            clarity: int
+            completeness: int
+            conciseness: int
 
-    def safe_parse(text: str) -> CompositeScores:
-        try:
-            data = loads(text)  # 处理单引号问题
-            return CompositeScores(**data)
-        except Exception as e:
-            logger.error(f"解析失败: {str(e)}\n原始响应: {text}")
-            raise
+        def safe_parse(text: str) -> CompositeScores:
+            try:
+                data = loads(text)
+                return CompositeScores(**data)
+            except Exception as e:
+                logger.error(f"解析失败: {str(e)}\n原始响应: {text}")
+                raise
 
-    # 构建处理链
-    evaluator_chain = (
-        evaluation_prompt 
-        | llm 
-        | StrOutputParser() 
-        | safe_parse
-    )
+        evaluator_chain = (
+            evaluation_prompt 
+            | llm 
+            | StrOutputParser() 
+            | safe_parse
+        )
 
-    try:
-        # 执行整体评估
         scores = evaluator_chain.invoke({
             "proposition": generated_doc.page_content,
             "original_text": original_doc.page_content
         })
         
-        # 阈值判断逻辑
         passed = all([
             scores.accuracy >= thresholds["accuracy"],
             scores.clarity >= thresholds["clarity"],
@@ -213,7 +238,6 @@ def evaluate_propositions(
             scores.conciseness >= thresholds["conciseness"]
         ])
 
-        # 记录评估结果
         generated_doc.metadata["quality_scores"] = scores.dict()
         generated_doc.metadata["evaluation_passed"] = passed
         
@@ -223,3 +247,36 @@ def evaluate_propositions(
         logger.error("评估流程异常: %s", str(e))
         original_doc.metadata["evaluation_error"] = str(e)
         return original_doc
+
+@task(name="proposition_evaluation")
+def evaluate_propositions(
+    original_doc: Document,
+    generated_doc: Document,
+    model_name: Optional[str] = None, # Allow None
+    ollama_base_url: Optional[str] = None, # Allow None
+    thresholds: dict = {"accuracy": 7, "clarity": 7, "completeness": 7, "conciseness": 7},
+    config_path: str = "config/settings.yaml" # Path to settings config
+) -> Document:
+    """
+    Evaluates generated propositions against the original document.
+    Model name and Ollama base URL can be provided or loaded from config.
+    """
+    logger = get_run_logger()
+
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_proposition_model")
+
+    if not _ollama_base_url:
+        raise ValueError("Ollama base URL must be provided or configured in settings.yaml.")
+    if not _model_name:
+        raise ValueError("Model name must be provided or configured as default_proposition_model in settings.yaml.")
+
+    return _core_evaluate_propositions(
+        original_doc, 
+        generated_doc, 
+        model_name=_model_name, 
+        ollama_base_url=_ollama_base_url,
+        thresholds=thresholds, 
+        logger=logger
+    )

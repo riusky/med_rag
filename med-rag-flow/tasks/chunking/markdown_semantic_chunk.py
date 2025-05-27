@@ -10,7 +10,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHea
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
-from tasks.helper_function import *
+# Updated imports:
+from med_rag_flow.utils.str_utils import replace_t_with_space 
+from med_rag_flow.utils.file_utils import extract_text_from_markdown
+# from tasks.helper_function import * # Original import removed
+
 from prefect import task, get_run_logger
 from langchain_experimental.text_splitter import SemanticChunker
 import re
@@ -21,8 +25,11 @@ from prefect import task, get_run_logger
 from langchain_core.output_parsers import StrOutputParser
 from json import loads
 
+from med_rag_flow.utils.config_loader import ConfigLoader # Added ConfigLoader import
+from med_rag_flow.tasks.chunking.markdown_hybrid_chunk import MarkdownHeaderTextSplitter # Ensure full path or correct relative
 
-@task(name="split_markdown_by_headers")
+
+@task(name="split_markdown_by_headers") # This task itself doesn't use LLM directly, so no ollama_base_url needed for its direct operation
 def split_markdown_by_headers(
     content: str,
     headers_to_split_on: List[Tuple[str, str]],
@@ -135,66 +142,127 @@ def split_markdown_by_headers(
         logger.error(f"分块处理失败: {str(e)}", exc_info=True)
         raise  # 保持任务状态为失败
 
-
-@task(name="split_markdown_semantic")
-def split_markdown_semantic(
-    base_docs: List[Document],
-    # 字符级分块参数
-    final_chunk_size: int = 1000,
-    final_chunk_overlap: int = 150,
-    # 语义分块参数
-    semantic_threshold_type: str = "percentile",  # 可选：percentile/standard_deviation/interquartile/gradient
-    semantic_threshold: float = 0.85,             # 根据类型对应不同数值范围
-    semantic_window_size: int = 3,                 # 上下文分析窗口
-    # 通用参数
-    keep_markdown_format: bool = True,
-    final_min_size: int = 150,
-    # Ollama参数
-    ollama_model: str = "linux6200/bge-reranker-v2-m3:latest",       # 本地部署的嵌入模型名称
-    ollama_base_url: str = "http://localhost:11434"
+def _core_split_markdown_by_headers(
+    content: str,
+    headers_to_split_on: List[Tuple[str, str]],
+    chunk_size: int,
+    chunk_overlap: int,
+    min_chunk_size: Optional[int],
+    strip_headers: bool,
+    sub_headers: Optional[List[Tuple[str, str]]],
+    sub_split_threshold: int,
+    logger
 ) -> List[Document]:
-    """
-    全参数语义分块任务（集成标题分块功能）
-    
-    |‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾|
-    | 实现策略：                                                    |
-    | 1. 标题分块 → 2. 子标题优化 → 3. 语义合并 → 4. 最终精调        |
-    |______________________________________________________________|
-    
-    Args:
-        # 语义分块参数
-        semantic_threshold_type: 相似度阈值类型（默认percentile）
-            percentile: 百分位阈值（0-100）
-            standard_deviation: 标准差倍数（建议1.5-3）
-            interquartile: 四分位距倍数（建议1.5-2）
-            gradient: 梯度变化百分位（0-100）
-        semantic_threshold: 对应类型的阈值量（默认0.85）
-        semantic_window_size: 上下文分析窗口大小（默认3句）
-        # 通用参数
-        keep_markdown_format: 保留Markdown格式符号（默认True）
-        final_min_size: 最终最小块大小（默认150）
-        # Ollama参数
-        ollama_model: 本地Ollama服务部署的嵌入模型名称（默认nomic-embed-text）
-        ollama_base_url: Ollama服务地址（默认http://localhost:11434）
+    """Core logic for splitting markdown by headers."""
+    try:
+        meta_counter = defaultdict(int)
+        logger.debug(f"原始内容长度: {len(content)} 字符")
+        logger.info("开始标题层级分块处理...")
 
-    Returns:
-        List[Document]: 结构化分块结果，每个块包含：
-        - page_content: 文本内容（保留段落结构）
-        - metadata: 层级标题元数据（示例：{"H1": "标题", "H2": "子标题"}）
-    """
+        logger.debug("执行基础标题分割...")
+        header_splitter = MarkdownHeaderTextSplitter( # Assuming MarkdownHeaderTextSplitter is defined in the same module or imported
+            headers_to_split_on=headers_to_split_on,
+            strip_headers=strip_headers
+        )
+        # MarkdownHeaderTextSplitter.split_text is a task, we need to call its core logic
+        # For now, let's assume it's refactored to have a _core_split_text or similar
+        # If MarkdownHeaderTextSplitter instance is created here, we'd call its core method.
+        # This example assumes direct call to a non-task version or that the task itself is fine if it calls a core method.
+        # For the purpose of this refactor, if header_splitter.split_text is a task, this indicates
+        # _core_split_markdown_by_headers is an orchestrator of tasks rather than pure logic.
+        # However, the instruction is to extract *this* function's core logic.
+        # So, we'll assume header_splitter.split_text can be treated as a utility call here.
+        initial_docs = header_splitter.split_text(content) # If this is a task, this core function is an orchestrator.
+                                                            # If it's a non-task method, it's fine.
+
+        logger.info(f"基础分割完成 ➔ 初始分块数: {len(initial_docs)}")
+        _log_metadata_distribution(initial_docs, meta_counter, logger)
+
+        if sub_headers:
+            logger.debug(
+                f"启用子标题二次分割 (阈值: {sub_split_threshold}字符)",
+                # sub_headers=str(sub_headers) # Logger does not take sub_headers as kwarg
+            )
+            initial_docs = _split_with_sub_headers( # This is a local helper, not a task
+                initial_docs, sub_headers, sub_split_threshold, 
+                strip_headers, headers_to_split_on
+            )
+            logger.info(f"子标题分割后 ➔ 分块数: {len(initial_docs)}")
+            _log_metadata_distribution(initial_docs, meta_counter, logger)
+
+        logger.debug(f"执行字符级分块 (chunk_size={chunk_size}, overlap={chunk_overlap})")
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+            keep_separator=True
+        )
+        final_docs = []
+        for doc in initial_docs:
+            chunks = text_splitter.split_documents([doc])
+            final_docs.extend(chunks)
+        logger.info(f"字符分块完成 ➔ 总块数: {len(final_docs)}")
+        _log_size_distribution(final_docs, logger)
+
+        if min_chunk_size is not None:
+            original_count = len(final_docs)
+            final_docs = _merge_short_chunks(final_docs, min_chunk_size) # local helper
+            logger.info(
+                f"合并短块完成 (阈值: {min_chunk_size}字符) ➔ "
+                f"减少块数: {original_count} → {len(final_docs)}"
+            )
+            _log_size_distribution(final_docs, logger)
+
+        logger.info(
+            f"✅ 处理完成 ➔ 总输出块数: {len(final_docs)} | "
+            f"平均长度: {sum(len(d.page_content) for d in final_docs)//len(final_docs) if final_docs else 0}字符"
+        )
+        return final_docs
+    except Exception as e:
+        logger.error(f"分块处理失败: {str(e)}", exc_info=True)
+        raise
+
+@task(name="split_markdown_by_headers")
+def split_markdown_by_headers(
+    content: str,
+    headers_to_split_on: List[Tuple[str, str]],
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    min_chunk_size: Optional[int] = 50,
+    strip_headers: bool = False,
+    sub_headers: Optional[List[Tuple[str, str]]] = None,
+    sub_split_threshold: int = 800
+) -> List[Document]:
     logger = get_run_logger()
-    
+    return _core_split_markdown_by_headers(
+        content, headers_to_split_on, chunk_size, chunk_overlap,
+        min_chunk_size, strip_headers, sub_headers, sub_split_threshold, logger
+    )
+
+def _core_split_markdown_semantic(
+    base_docs: List[Document],
+    final_chunk_size: int,
+    final_chunk_overlap: int,
+    semantic_threshold_type: str,
+    semantic_threshold: float,
+    semantic_window_size: int,
+    keep_markdown_format: bool,
+    final_min_size: int,
+    embedding_model_name: str, # Changed from ollama_model
+    ollama_base_url: str,
+    logger
+) -> List[Document]:
+    """Core logic for semantic markdown splitting."""
     try:
         logger.info(f"初始块数: {len(base_docs)}")
 
-        # 阶段2：初始化Ollama嵌入模型
-        logger.info("初始化Ollama嵌入模型...")
+        logger.info(f"初始化Ollama嵌入模型 (Model: {embedding_model_name}, Base URL: {ollama_base_url})...")
         embeddings = OllamaEmbeddings(
-            model=ollama_model,
-            base_url=ollama_base_url,
+            model=embedding_model_name, # Use new parameter name
+            base_url=ollama_base_url,   # Use passed base_url
         )
 
-        # 阶段3：语义分块
         semantic_chunker = SemanticChunker(
             embeddings=embeddings,
             buffer_size=semantic_window_size,
@@ -205,7 +273,6 @@ def split_markdown_semantic(
         semantic_docs = semantic_chunker.split_documents(base_docs)
         logger.info(f"语义分块完成 ➔ 块数: {len(semantic_docs)}")
 
-        # 阶段4：最终分块优化
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=final_chunk_size,
             chunk_overlap=final_chunk_overlap,
@@ -218,13 +285,10 @@ def split_markdown_semantic(
             chunks = text_splitter.split_documents([doc])
             processed_docs.extend(chunks)
         
-        # 智能合并过小分块（而不是直接过滤）
         final_docs = []
         current_chunk = None
-
         for doc in processed_docs:
             doc_size = len(doc.page_content)
-            
             if doc_size >= final_min_size:
                 if current_chunk:
                     final_docs.append(current_chunk)
@@ -232,7 +296,6 @@ def split_markdown_semantic(
                 final_docs.append(doc)
             else:
                 if current_chunk:
-                    # 合并内容并保留所有元数据
                     current_chunk.page_content += "\n" + doc.page_content
                     current_chunk.metadata.update(doc.metadata)
                     if len(current_chunk.page_content) >= final_min_size:
@@ -243,15 +306,51 @@ def split_markdown_semantic(
                         page_content=doc.page_content,
                         metadata=doc.metadata.copy()
                     )
-
         if current_chunk:
             final_docs.append(current_chunk)
-
         return final_docs
-
     except Exception as e:
         logger.error(f"分块流程异常: {str(e)}", exc_info=True)
         raise
+
+@task(name="split_markdown_semantic")
+def split_markdown_semantic(
+    base_docs: List[Document],
+    final_chunk_size: int = 1000,
+    final_chunk_overlap: int = 150,
+    semantic_threshold_type: str = "percentile",
+    semantic_threshold: float = 0.85,
+    semantic_window_size: int = 3,
+    keep_markdown_format: bool = True,
+    final_min_size: int = 150,
+    embedding_model_name: Optional[str] = None, # Changed, allow None
+    ollama_base_url: Optional[str] = None,    # Allow None
+    config_path: str = "config/settings.yaml" # Path to settings config
+) -> List[Document]:
+    """
+    全参数语义分块任务（集成标题分块功能）
+    (Prefect task wrapper)
+    """
+    logger = get_run_logger()
+
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    # Use semantic_chunker_embedding_model from config
+    _embedding_model_name = embedding_model_name or cfg_loader.get_config("services.ollama.semantic_chunker_embedding_model")
+
+    if not _ollama_base_url:
+        raise ValueError("Ollama base URL must be provided or configured in settings.yaml.")
+    if not _embedding_model_name:
+        raise ValueError("Embedding model name must be provided or configured as semantic_chunker_embedding_model in settings.yaml.")
+
+    return _core_split_markdown_semantic(
+        base_docs, final_chunk_size, final_chunk_overlap,
+        semantic_threshold_type, semantic_threshold, semantic_window_size,
+        keep_markdown_format, final_min_size, 
+        embedding_model_name=_embedding_model_name, # Pass resolved name
+        ollama_base_url=_ollama_base_url,       # Pass resolved URL
+        logger=logger
+    )
 def _log_metadata_distribution(docs: List[Document], counter: dict, logger):
     """记录元数据层级分布"""
     for doc in docs:

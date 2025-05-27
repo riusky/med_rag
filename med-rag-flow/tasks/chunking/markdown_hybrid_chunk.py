@@ -280,11 +280,19 @@ class MarkdownHeaderTextSplitter:
                       metadata=final_metadata)
             )
         return final_chunks
-      
-    @task(name="split_text")
-    def split_text(self, text: str, metadata: Optional[dict] = None) -> List[Chunk]:
-        """基于标题分割 Markdown 文本，并根据 chunk_size 进一步细分。"""
-        logger = get_run_logger()
+
+    def _core_split_text(self, text: str, metadata: Optional[dict] = None, logger = None) -> List[Chunk]:
+        """Core logic for splitting Markdown text based on headers and chunk_size."""
+        if logger is None: # Use Prefect logger if available, else standard print
+            try:
+                logger = get_run_logger()
+            except: # Fallback if no Prefect context
+                import logging
+                logger = logging.getLogger(__name__)
+                if not logger.hasHandlers():
+                    logger.addHandler(logging.StreamHandler())
+                    logger.setLevel(logging.INFO)
+
         base_metadata = metadata or {}
         lines = text.split("\n")
         lines_with_metadata: List[LineType] = []
@@ -390,6 +398,12 @@ class MarkdownHeaderTextSplitter:
             total_chars = sum(len(c.content) for c in final_chunks)
             logger.info(f"最终分割完成，总块数: {len(final_chunks)}，总字符数: {total_chars}")
             return final_chunks
+            
+    @task(name="split_text")
+    def split_text(self, text: str, metadata: Optional[dict] = None) -> List[Chunk]:
+        """基于标题分割 Markdown 文本，并根据 chunk_size 进一步细分。 (Prefect task wrapper)"""
+        logger = get_run_logger()
+        return self._core_split_text(text, metadata, logger)
 
 
 # --- 主要执行 / 测试块 ---
@@ -441,3 +455,53 @@ if __name__ == '__main__':
 
     except FileNotFoundError:
         print("Error:  RevolutionMaximaUserManualCN_content_list_output.md not found. Please create the file for testing.")
+
+# TODO: Move the following test/demonstration code to proper unit tests under the tests/ directory.
+# if __name__ == '__main__':
+#     # 测试代码块
+#     try:
+#         # 假设  RevolutionMaximaUserManualCN_content_list_output.md 文件存在于脚本同目录下
+#         with open("RevolutionMaximaUserManualCN_content_list_output.md", "r", encoding="utf-8") as f:
+#             text = f.read()
+
+#         # 策略 1: 仅基于标题分割 (不设置 chunk_size)
+#         # 效果: 生成的块数量较少，每个块对应一个最低级别的标题段落。
+#         #       块的大小可能非常不均匀，有些块可能非常大。
+#         #       代码块始终包含在它们所属的标题段落内。
+#         # print("--- Splitting without chunk_size limit (Header-based only) ---")
+#         # splitter_no_limit = MarkdownHeaderTextSplitter()
+#         # chunks_no_limit = splitter_no_limit.split_text(text)
+#         # print(f"Total chunks: {len(chunks_no_limit)}")
+#         # 取消注释以查看详细输出
+#         # for chunk in chunks_no_limit:
+#         #     print(chunk.to_markdown(return_all=True))
+#         #     print("=" * 40)
+
+#         # print("\n" + "===" * 20 + "\n")
+
+#         # 策略 2: 基于标题分割，然后根据 chunk_size 和分隔符进一步细分
+#         # 效果: 首先按标题分割，然后对于超出 chunk_size 的块，
+#         #       会尝试在更自然的边界（如段落 `\n\n` 或句子/行 `\n`，以及其他标点）进行分割。
+#         #       目标是使块的非代码内容长度接近但不超过 chunk_size。
+#         #       代码块保持完整，并且其内容不计入 chunk_size 计算。
+#         #       这通常能产生大小更均匀、更适合后续处理（如 RAG）的块。
+#         print("--- Splitting with chunk_size = 800 (Header-based + Size/Separator-based refinement) ---")
+#         # 使用默认分隔符: ["\n\n", "\n", "。", "！", "？", ". ", "! ", "? ", "；", "; ", "，", ", "]
+#         # 并启用 is_separator_regex=True 以处理中文标点等
+#         splitter_with_limit = MarkdownHeaderTextSplitter(chunk_size=800, is_separator_regex=True) # 注意添加 is_separator_regex=True 以使用默认中文分隔符
+#         chunks_with_limit = splitter_with_limit.split_text(text)
+#         print(f"Total chunks: {len(chunks_with_limit)}")
+#         for i, chunk in enumerate(chunks_with_limit):
+#             print(f"--- Chunk {i+1} ---")
+#             non_code_len = splitter_with_limit._calculate_length_excluding_code(chunk.content)
+#             print(f"Content Length (Total): {len(chunk.content)}")
+#             print(f"Content Length (Non-Code): {non_code_len}") # 检查非代码长度是否接近 chunk_size
+#             print(f"Metadata: {chunk.metadata}")
+#             # print("\n--- Markdown (Content Only) ---")
+#             # print(chunk.to_markdown())
+#             print("\n--- Markdown (With Metadata) ---")
+#             print(chunk.to_markdown(return_all=True))
+#             print("====" * 20) # 缩短分隔符以便查看更多块
+
+#     except FileNotFoundError:
+#         print("Error:  RevolutionMaximaUserManualCN_content_list_output.md not found. Please create the file for testing.")

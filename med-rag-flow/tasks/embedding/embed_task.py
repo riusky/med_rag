@@ -219,3 +219,37 @@ if __name__ == "__main__":
     
     # # 更新后信息
     # print("更新后存储信息:", manager.get_store_info())
+
+# TODO: Move the following test/demonstration code to proper unit tests under the tests/ directory.
+# if __name__ == "__main__":
+#     config = {
+#         "models": {
+#             "name": "linux6200/bge-reranker-v2-m3:latest",
+#             "base_url": "http://localhost:11434"
+#         },
+#         "vector_store": {
+#             "base_path": "../../data/vectorstorage",
+#             "naming_template": "vec_{model_hash}_{doc_hash}"
+#         }
+#     }
+
+#     # 初始文档集
+#     docs = [
+#         Document(page_content="设备维护指南", metadata={"section": "intro"}),
+#         Document(page_content="安全操作规程", metadata={"section": "safety"})
+#     ]
+
+#     # 初始化管理器
+#     manager = VectorStoreManager(config, docs)
+    
+#     # 获取元信息
+#     print("初始存储信息:", manager.get_store_info())
+
+    # 增量更新
+    # new_docs = [
+    #     Document(page_content="故障排除手册", metadata={"section": "troubleshooting"})
+    # ]
+    # manager.update_documents(new_docs)
+    
+    # # 更新后信息
+    # print("更新后存储信息:", manager.get_store_info())

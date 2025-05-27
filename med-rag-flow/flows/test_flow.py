@@ -6,5 +6,6 @@ def my_flow(str: str):
     print(f"Hello, Prefect! {str}")
 
 
+# Entry point for serving the Prefect flow.
 if __name__ == "__main__":
     my_flow.serve(name="my-first-deployment")

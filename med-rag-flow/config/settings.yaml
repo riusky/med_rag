@@ -1,0 +1,25 @@
+services:
+  ollama:
+    base_url: "http://localhost:11434"
+    default_proposition_model: "deepseek-r1:1.5b"
+    semantic_chunker_embedding_model: "nomic-embed-text" # Used by split_markdown_semantic
+    default_embedding_model: "bge-m3:latest" # For general embedding tasks like in VectorStoreManager
+    default_query_rewrite_model: "deepseek-r1:1.5b"
+    default_step_back_model: "llama3"
+    default_decomposition_model: "deepseek-r1:14b"
+    default_hyde_model: "deepseek-r1:1.5b"
+    default_hypothetical_question_model: "llama3:8b"
+    default_document_title_model: "deepseek-r1:1.5b"
+  frontend_app:
+    base_url: "http://localhost:9090" # For image_base_url and api_base in document_process_flow
+
+flows:
+  document_processing:
+    max_concurrency: 4
+    safe_mode: true
+  # Add other flow-specific settings here if needed
+
+data_paths:
+  # Using absolute path assuming /app is project root in runtime environment.
+  # Adjust if project structure is different or a relative path from project root is preferred.
+  vector_store_base: "/app/server/med_rag_server/vectorstorage"

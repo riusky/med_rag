@@ -2,7 +2,11 @@ import re
 import traceback
 from langchain.prompts import PromptTemplate
 from langchain_ollama import ChatOllama, OllamaLLM
+from typing import Optional # Added Optional
+from med_rag_flow.utils.config_loader import ConfigLoader # Added ConfigLoader
 
+# Default config path, can be overridden in functions
+DEFAULT_CONFIG_PATH = "config/settings.yaml"
 
 def rewrite_query(
     original_query: str,
@@ -10,9 +14,11 @@ def rewrite_query(
     
 原始查询：{original_query}
 """,
-    model: str = "deepseek-r1:1.5b",
+    model_name: Optional[str] = None,
+    ollama_base_url: Optional[str] = None,
     temperature: float = 0,
-    num_predict: int = 4096
+    num_predict: int = 4096,
+    config_path: str = DEFAULT_CONFIG_PATH
 ) -> str:
     """
     单函数实现查询重写
@@ -20,17 +26,26 @@ def rewrite_query(
     参数：
     original_query: 需要优化的原始查询
     query_template: 重写模板（必须包含{original_query}占位符）
-    model: 使用的Ollama模型名称
+    model_name: 使用的Ollama模型名称 (None to use config default)
+    ollama_base_url: Ollama base URL (None to use config default)
     temperature: 生成温度
     num_predict: 最大生成长度
+    config_path: Path to the configuration file.
     
     返回：
     优化后的查询字符串
     """
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_query_rewrite_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
+
     # 初始化模型
     llm = OllamaLLM(
-        model=model,
-        base_url="http://localhost:11434",
+        model=_model_name,
+        base_url=_ollama_base_url,
         temperature=temperature,
         num_predict=num_predict
     )
@@ -49,8 +64,9 @@ def rewrite_query(
 
 def generate_step_back_query(
     original_query: str,
-    model: str = "llama3",
-    temperature: float = 0,  # 适当保留多样性
+    model_name: Optional[str] = None,
+    ollama_base_url: Optional[str] = None,
+    temperature: float = 0,
     num_predict: int = 2000,
     step_back_template: str = """你是一个人工智能助手，负责生成更宽泛、更通用的广义查询语句，以提高检索增强生成（RAG）系统中的上下文检索能力。
 给定原始查询语句，生成一个广义查询语句，该语句应更宽泛，且有助于检索相关背景信息。
@@ -58,25 +74,23 @@ def generate_step_back_query(
 原始查询语句：{original_query}
 
 直接输出广义查询语句。
-"""
+""",
+    config_path: str = DEFAULT_CONFIG_PATH
 ) -> str:
     """
     生成回溯查询的Ollama实现
-    
-    参数：
-    original_query: 需要扩展的具体查询
-    model: 本地模型名称（默认llama3）
-    temperature: 生成多样性控制
-    num_predict: 最大生成长度
-    step_back_template: 回溯查询模板
-    
-    返回：
-    优化后的广义查询
     """
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_step_back_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
+        
     # 初始化本地模型
     llm = OllamaLLM(
-        model=model,
-        base_url="http://localhost:11434",
+        model=_model_name,
+        base_url=_ollama_base_url,
         temperature=temperature,
         num_predict=num_predict
     )
@@ -113,31 +127,30 @@ def decompose_query(
 4. 极端天气事件与全球变暖的关联性如何？
 
 请为以下查询生成子查询：""",
-    model: str = "deepseek-r1:14b",
+    model_name: Optional[str] = None,
+    ollama_base_url: Optional[str] = None,
     temperature: float = 0,
-    num_predict: int = 4096
+    num_predict: int = 4096,
+    config_path: str = DEFAULT_CONFIG_PATH
 ) -> list:
     """
     改进版查询分解方法（模板参数化）
-    
-    参数：
-    original_query: 需要分解的复杂查询
-    decomposition_template: 分解模板（必须包含{original_query}占位符）
-    model: 本地模型名称
-    temperature: 生成多样性
-    num_predict: 最大生成长度
-    
-    返回：
-    清理后的子查询列表
     """
     # 模板验证
     if "{original_query}" not in decomposition_template:
         raise ValueError("模板必须包含{original_query}占位符")
-    
+
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_decomposition_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
+        
     # 初始化模型
     llm = OllamaLLM(
-        model=model,
-        base_url="http://localhost:11434",
+        model=_model_name,
+        base_url=_ollama_base_url,
         temperature=temperature,
         num_predict=num_predict
     )
@@ -176,32 +189,36 @@ def generate_hypothetical_doc(
 生成一份直接回答该问题的假设性文档。该文档应详细且深入。
 文档大小约{text_length}个字符，直接输出假设的文档，不要有其他解释性文字
 """,
-    llm_model: str = "deepseek-r1:1.5b",
+    model_name: Optional[str] = None, # Renamed from llm_model
+    ollama_base_url: Optional[str] = None,
     text_length: int = 500,
     temperature: float = 0,
-    num_ctx: int = 4096,
+    num_ctx: int = 4096, # num_predict is the OllamaLLM param, num_ctx is often for context window
+    config_path: str = DEFAULT_CONFIG_PATH,
     **model_kwargs
 ) -> str:
     """
     完整参数版假设文档生成方法
-    
-    参数：
-    text_length: 目标文本长度（字符数，用于提示模板）
-    max_tokens: 生成的最大token数量（实际控制生成长度）
-    其他参数同上...
     """
     
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_hyde_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
+
     # 提示模板动态参数
     template_params = {"query": query}
-    if "{text_length}" in hyde_prompt:
+    if "{text_length}" in hyde_prompt: # Check if placeholder exists before formatting
         template_params["text_length"] = text_length
     
     # 初始化模型
     llm = OllamaLLM(
-        model=llm_model,
-        base_url="http://localhost:11434",
+        model=_model_name,
+        base_url=_ollama_base_url,
         temperature=temperature,
-        num_predict=num_ctx,
+        num_predict=num_ctx, # OllamaLLM uses num_predict
         **model_kwargs
     )
     
@@ -216,7 +233,8 @@ def generate_hypothetical_doc(
 from langchain_core.output_parsers import StrOutputParser
 def generate_hypothetical_questions(
     chunk_text: str,
-    model: str = "llama3:8b",
+    model_name: Optional[str] = None, # Renamed from model
+    ollama_base_url: Optional[str] = None,
     num_questions: int = 5,
     temperature: float = 0,
     num_ctx: int = 4096,
@@ -230,23 +248,24 @@ def generate_hypothetical_questions(
 结构设计在提升太阳能电池光吸收效率方面的作用是什么？
 
 ## 用户输入的文本
-{chunk_text}"""
+{chunk_text}""",
+    config_path: str = DEFAULT_CONFIG_PATH
 ) -> List[str]:
     """
     生成假设性问题字符串的优化版本
-    
-    参数：
-    chunk_text: 输入文本片段
-    model: 使用的Ollama模型
-    num_questions: 需要生成的问题数量
-    prompt_template: 包含{num_questions}和{chunk_text}占位符的提示模板
     """
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_hypothetical_question_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
 
     llm = ChatOllama(
-        model=model,
-        base_url="http://localhost:11434",
+        model=_model_name,
+        base_url=_ollama_base_url,
         temperature=temperature,
-        num_ctx=num_ctx
+        num_ctx=num_ctx # ChatOllama uses num_ctx for context window size
     )
 
     try:
@@ -288,7 +307,8 @@ def generate_hypothetical_questions(
 
 def generate_document_title(
     chunk_text: str,
-    model: str = "deepseek-r1:1.5b",
+    model_name: Optional[str] = None, # Renamed from model
+    ollama_base_url: Optional[str] = None,
     temperature: float = 0,
     num_ctx: int = 4096,
     prompt_template: str = """
@@ -299,22 +319,24 @@ def generate_document_title(
 {chunk_text}
 
 
-"""
+""",
+    config_path: str = DEFAULT_CONFIG_PATH
 ) -> Optional[str]:
     """
     生成文档标题的无截断版本
-    
-    参数：
-    chunk_text: 输入文本内容（完整未截断）
-    model: 使用的Ollama模型
-    temperature: 生成温度
-    num_ctx: 模型上下文窗口大小
     """
+    cfg_loader = ConfigLoader(config_path)
+    _ollama_base_url = ollama_base_url or cfg_loader.get_config("services.ollama.base_url")
+    _model_name = model_name or cfg_loader.get_config("services.ollama.default_document_title_model")
+
+    if not _ollama_base_url or not _model_name:
+        raise ValueError("Ollama base URL and model name must be provided or configured.")
+        
     try:
         # 初始化模型
         llm = ChatOllama(
-            model=model,
-            base_url="http://localhost:11434",
+            model=_model_name,
+            base_url=_ollama_base_url,
             temperature=temperature,
             num_ctx=num_ctx
         )

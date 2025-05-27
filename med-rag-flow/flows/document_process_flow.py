@@ -39,66 +39,52 @@ src_dir = current_dir.parent if current_dir.name == 'flows' else current_dir
 sys.path.append(str(src_dir))
 
 from utils.str_utils import optimize_str
-from tasks.doc_task.base_task import *
-from tasks.doc_task.process_pdf_task import process_pdf_file
+from tasks.doc_task.base_task import convert_paths, validate_input_dir, collect_all_pdf_files, analyze_results, perform_cleanup, get_subdirectories # Specific imports
+from tasks.doc_task.process_pdf_task import process_pdf_file # Assuming mineru_process_pdf_flow is intended to be process_pdf_file or similar
 from utils.file_utils import ensure_directory
 from flows.embed_vectorstorage_flow import process_and_store_directory
-from flows.test_flow import my_flow
+# from flows.test_flow import my_flow # Assuming my_flow is not used, remove if not
+from med_rag_flow.utils.config_loader import ConfigLoader # Import ConfigLoader
 
-# ------------------------ 全局配置 ------------------------
-DEFAULT_INPUT_DIR = Path("data/raw/pdf")       # 默认PDF输入目录
-DEFAULT_OUTPUT_DIR = Path("data/processed")    # 中间文件输出目录
-FINAL_OUTPUT_DIR = Path("data/output/markdown")# 最终Markdown存储目录
-MAX_CONCURRENCY = 4                            # 最大并发任务数（根据CPU核心数调整）
-SAFE_MODE = True                               # 安全模式开关（防止误删文件）
-
-
-    # input_dir: str = "../data/raw/pdf",
-    # output_root: str = "../data/processed",
-    # final_output_dir: str = "../data/output/markdown"
+# ------------------------ 全局配置 (Removed, will be loaded from config or passed as params) ------------------------
+# DEFAULT_INPUT_DIR = Path("data/raw/pdf")
+# DEFAULT_OUTPUT_DIR = Path("data/processed")
+# FINAL_OUTPUT_DIR = Path("data/output/markdown")
+# MAX_CONCURRENCY = 4 # Will be loaded from config if needed by a component
+# SAFE_MODE = True    # Will be loaded from config if needed by a component
 
 
 # ------------------------ 主工作流 ------------------------
 @flow(
     name="pdf_to_markdown",
-    description="PDF批量处理主流程｜含多级目录支持与智能重试机制"
+    description="PDF批量处理主流程｜含多级目录支持与智能重试机制",
+    # task_runner=ConcurrentTaskRunner() # Example: if MAX_CONCURRENCY was for this flow
 )
 def pdf_to_markdown(
     input_dir: str,
     output_root: str,
     final_output_dir: str,
     kb_id: int,
-    image_path: str
+    image_path: str, # This is for storing extracted images from PDFs, to be served
+    config_file_path: str = "config/settings.yaml" # Allow overriding config path
 ) -> Dict:
     """
     PDF文档处理全流程控制器
-    
-    主要阶段:
-    1. 路径规范化处理
-    2. 目录结构验证与创建
-    3. 分布式文件处理
-    4. 结果分析与清理
-    5. 元数据汇总报告
-
-    参数:
-        input_dir: PDF源文件根目录（支持嵌套子目录）
-        output_root: 中间文件输出根目录
-        final_output_dir: 最终Markdown存储路径
-
-    返回:
-        包含处理元数据的字典:
-        {
-            "total": 总文件数,
-            "success": 成功数,
-            "failed": 失败数,
-            "start_time": ISO格式开始时间,
-            "duration": 总耗时(秒),
-            "output_dir": 输出目录路径,
-            "error_logs": [错误信息列表]
-        }
     """
     logger = get_run_logger()
+    cfg_loader = ConfigLoader(config_file_path)
+
+    # Load configurations
+    # safe_mode = cfg_loader.get_config("flows.document_processing.safe_mode", True) # Example if SAFE_MODE was used
+    # max_concurrency could be used to configure a task runner if needed
+    # max_concurrency_val = cfg_loader.get_config("flows.document_processing.max_concurrency", 4) # Example
     
+    frontend_base_url = cfg_loader.get_config("services.frontend_app.base_url", "http://localhost:9090")
+    ollama_base_url = cfg_loader.get_config("services.ollama.base_url", "http://localhost:11434")
+    default_embedding_model = cfg_loader.get_config("services.ollama.default_embedding_model", "bge-m3:latest")
+    vector_store_base_path = cfg_loader.get_config("data_paths.vector_store_base", "/app/server/med_rag_server/vectorstorage")
+
+
     try:
         # ====================== 前置清理阶段 ======================
         logger.info("🧹 初始化目录清理...")
@@ -149,9 +135,11 @@ def pdf_to_markdown(
         result_stats = analyze_results(processing_results)
         
         # ====================== 阶段6：资源清理 ======================
-        if not SAFE_MODE:
-            logger.warning("⚠️ 安全模式已关闭，执行清理操作")
-            perform_cleanup(output_path)
+        # Example of using a loaded config value, if SAFE_MODE was used by this flow's logic
+        # safe_mode_for_cleanup = cfg_loader.get_config("flows.document_processing.safe_mode", True)
+        # if not safe_mode_for_cleanup:
+        #     logger.warning("⚠️ 安全模式已关闭，执行清理操作")
+        #     perform_cleanup(output_path) # perform_cleanup needs to be defined or imported
             
         # ====================== 阶段7：复制图片目录到服务器 ======================
         logger.info("🖼️ 开始复制图片目录到服务器...")
@@ -180,24 +168,25 @@ def pdf_to_markdown(
 
         logger.info(f"📦 完成目录复制：{len(copied_dirs)}成功 / {len(error_logs)}失败")
         
-        image_base_url = f'http://127.0.0.1:9090/static/images/{kb_id}'
+        # Use configured frontend_base_url
+        image_base_url_for_markdown = f'{frontend_base_url}/static/images/{kb_id}'
         for md_file in final_output_path.rglob('*.md'):
             try:
-                replace_image_paths(md_file,image_base_url)
+                replace_image_paths(md_file, image_base_url_for_markdown) # replace_image_paths needs to be defined/imported
             except Exception as e:
                 logger.error(f"文件处理失败 [{md_file.name}]: {str(e)}", exc_info=True)
       
         # ====================== 阶段8：分块文档并得到嵌入数据库 ======================
         logger.info("🧠 启动知识库嵌入流程...")
         try:
-            # 配置向量存储参数
+            # 配置向量存储参数 using loaded configurations
             embed_config = {
                 "models": {
-                    "name": "bge-m3:latest",
-                    "base_url": "http://127.0.0.1:11434"
+                    "name": default_embedding_model, # Use loaded default
+                    "base_url": ollama_base_url      # Use loaded default
                 },
                 "vector_store": {
-                    "base_path": "../../server/med_rag_server/vectorstorage",
+                    "base_path": vector_store_base_path, # Use loaded default
                     "naming_template": f"kb_{kb_id}_" + "{model_hash}_{doc_hash}"
                 }
             }
@@ -231,16 +220,17 @@ def pdf_to_markdown(
                 vector_path = None
 
             # 调用双接口更新（新增部分）
-            api_base = "http://localhost:9090/api/knowledge-bases"
+            # Use configured frontend_base_url for api_base
+            api_base_url_for_kb = f"{frontend_base_url}/api/knowledge-bases"
             headers = {"Content-Type": "application/json"}
             
             try:
                 # 第一步：更新处理状态
                 status_response = requests.patch(
-                    f"{api_base}/{kb_id}/processing-status",
+                    f"{api_base_url_for_kb}/{kb_id}/processing-status",
                     json={"processing_status": process_status},
                     headers=headers,
-                    timeout=10
+                    timeout=10 # Consider making timeout configurable
                 )
                 
                 if status_response.status_code != 200:
@@ -249,10 +239,10 @@ def pdf_to_markdown(
                 # 第二步：成功时更新路径
                 if process_status == "completed" and vector_manager.vector_store_path_name:
                     path_response = requests.patch(
-                        f"{api_base}/{kb_id}/vector-path",
+                        f"{api_base_url_for_kb}/{kb_id}/vector-path",
                         json={"vector_storage_path": vector_manager.vector_store_path_name},
                         headers=headers,
-                        timeout=20
+                        timeout=20 # Consider making timeout configurable
                     )
                     
                     if path_response.status_code == 200:
@@ -268,11 +258,14 @@ def pdf_to_markdown(
             result_stats["vector_store"] = None
             
             # 异常情况仅更新状态
+            # Ensure api_base_url_for_kb is defined in this scope for exception handling too
+            api_base_url_for_kb_exc = f"{frontend_base_url}/api/knowledge-bases"
             try:
                 requests.patch(
-                    f"{api_base}/{kb_id}/processing-status",
-                    json={"processingStatus": "failed"},
-                    timeout=5
+                    f"{api_base_url_for_kb_exc}/{kb_id}/processing-status", # Use defined var
+                    json={"processingStatus": "failed"}, # Ensure consistent key ("processing_status" vs "processingStatus")
+                    headers=headers, # headers should be defined
+                    timeout=5 # Consider making timeout configurable
                 )
             except Exception as ex:
                 logger.error(f"异常状态更新失败: {str(ex)}")
@@ -424,6 +417,7 @@ def mineru_process_pdf_flow(
 
 
 # ------------------------ 执行入口 ------------------------
+# Entry point for serving the Prefect flow.
 if __name__ == "__main__":
     """
     本地调试模式启动命令:

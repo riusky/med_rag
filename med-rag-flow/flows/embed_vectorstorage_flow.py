@@ -237,13 +237,15 @@ def _process_semantic(
     params: Dict
 ) -> List[Document]:
     """语义分块处理管道"""
-    return split_markdown_semantic(
+    return split_markdown_semantic( # This task will load defaults from config if corresponding params are None
         base_docs=docs,
         final_chunk_size=params.get("chunk_size", 1000),
         final_chunk_overlap=params.get("chunk_overlap", 150),
         semantic_threshold_type=params.get("semantic_threshold_type", "percentile"),
         semantic_threshold=params.get("semantic_threshold", 0.85),
-        ollama_model=params.get("ollama_model", "bge-m3:latest")
+        # Pass model name and URL from params if available, else let the task load from its config
+        embedding_model_name=params.get("embedding_model_name"), # Task expects embedding_model_name
+        ollama_base_url=params.get("ollama_base_url")             # Task expects ollama_base_url
     )
 
 def _process_semantic_base(
@@ -279,7 +281,12 @@ def _process_propositions(
     header_docs = _process_header_hybrid(docs, params)
     
     # 第二级：语义优化
-    return propositions(header_docs,model=params.get("ollama_model", "deepseek-r1:1.5b"))
+    # Pass model name and URL from params if available, else let the task load from its config
+    return propositions(
+        header_docs,
+        model_name=params.get("proposition_model_name"), # Task expects model_name
+        ollama_base_url=params.get("ollama_base_url")       # Task expects ollama_base_url
+    )
 
   
 def _process_header_hybrid(
@@ -390,3 +397,81 @@ if __name__ == '__main__':
             # 特殊处理常见错误
             if "ConnectionError" in str(e):
                 print("请确认 Ollama 服务已启动并运行在 127.0.0.1:11434")
+
+# TODO: Move the following test/demonstration code to proper unit tests under the tests/ directory.
+# if __name__ == '__main__':
+#     # 配置参数
+#     CONFIG = {
+#         "models": {
+#             "name": "bge-m3:latest",
+#             "base_url": "http://localhost:11434"
+#         },
+#         "vector_store": {
+#             "base_path": "../data/vectorstorage",
+#             "naming_template": "vec_{model_hash}_{doc_hash}"
+#         }
+#     }
+
+#     # 测试案例配置
+#     TEST_CASES = [
+#         {
+#             "path": "../data/output/markdown/test01/RevolutionMaximaUserManualCN453-454.md",  # 单个文件测试
+#             "processor_type": "header",
+#             "params": {
+#                 "headers_to_split_on": [("#", "H1"), ("##", "H2")],
+#                 "chunk_size": 800
+#             }
+#         },
+#         {
+#             "path": "./",  # 目录测试
+#             "processor_type": "semantic",
+#             "params": {
+#                 "chunk_size": 1000,
+#                 "semantic_threshold": 0.9
+#             }
+#         },
+#         {
+#             "path": "../data/output/markdown/test02",  # 目录测试
+#             "processor_type": "header_hybrid",
+#             "params": {
+#                 "chunk_size": 1000,
+#                 "semantic_threshold": 0.9
+#             }
+#         },
+#         {
+#             "path": "../data/output/markdown/test02",  # 目录测试
+#             "processor_type": "header_hybrid_semantic",
+#             "params": {
+#                 "chunk_size": 1000,
+#                 "semantic_threshold": 0.9
+#             }
+#         }
+#     ]
+
+#     for case in TEST_CASES:
+#         print(f"\n{'='*40}\n测试案例: {case['path']} ({case['processor_type']})\n{'='*40}")
+        
+#         try:
+#             # 执行处理流程
+#             manager = process_and_store_directory(
+#                 content_source=case["path"],
+#                 config=CONFIG,
+#                 processor_type=case["processor_type"],
+#                 processor_params=case["params"]
+#             )
+
+#             # 验证结果
+#             if manager and manager.is_ready:
+#                 print(f"✅ 测试成功")
+#                 print("存储信息:", manager.get_store_info())
+#                 print("示例文档:")
+#                 for doc in manager.docs[:2]:
+#                     print(f"  - {doc.page_content[:50]}... (元数据: {doc.metadata})")
+#             else:
+#                 print("❌ 测试失败：未生成有效存储")
+
+#         except Exception as e:
+#             print(f"❌ 测试异常: {str(e)}")
+#             # 特殊处理常见错误
+#             if "ConnectionError" in str(e):
+#                 print("请确认 Ollama 服务已启动并运行在 127.0.0.1:11434")

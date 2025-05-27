@@ -126,5 +126,22 @@ class TestDirectoryFunctions(unittest.TestCase):
         self.assertTrue(self.sub_dir.exists())
         self.assertTrue((self.sub_dir / "file.txt").exists())
 
-if __name__ == "__main__":
-    unittest.main()
+def extract_text_from_markdown(md_path: Union[str, Path]) -> str: # Added Path type hint
+    """
+    从Markdown文件中提取文本内容（保留原始格式，包括Markdown标记）
+    
+    参数:
+    md_path (str or Path): Markdown文件的路径
+    
+    返回:
+    str: 文件中的原始文本内容（包含Markdown语法）
+    """
+    # 以UTF-8编码打开文件（避免中文乱码）
+    # Ensure md_path is a string for open() if it's a Path object
+    with open(str(md_path), 'r', encoding='utf-8') as f:
+        # 读取全部内容并返回
+        return f.read()
+
+# TODO: Consider moving these unit tests to the tests/ directory for consistency.
+# if __name__ == "__main__":
+#     unittest.main()
