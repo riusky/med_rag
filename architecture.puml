@@ -1,0 +1,30 @@
+@startuml
+!theme materia
+
+package "Frontend (Vue.js)" {
+  [UI Components]
+  [API Client] -down-> [Server API]
+  [Router]
+  [State Management]
+}
+
+package "Server (Python/FastAPI)" {
+  [Server API] -down-> [Services]
+  [Services] -down-> [Database (PostgreSQL)]
+  [Services] -down-> [Task Queue (Redis/Celery)]
+  [Database (PostgreSQL)]
+  [Task Queue (Redis/Celery)] -down-> [med-RAG Flow]
+}
+
+package "med-RAG Flow (Python)" {
+  [Flow Orchestrator] -down-> [LLM Service]
+  [Flow Orchestrator] -down-> [Vector Store]
+  [Document Processing Tasks]
+  [Embedding Tasks]
+  [LLM Tasks]
+  [LLM Service]
+  [Vector Store]
+}
+
+[User] -up-> [Frontend (Vue.js)]
+@enduml

@@ -1,0 +1,43 @@
+@startuml
+!theme materia
+
+title Data Flow Diagram
+
+actor User
+participant Frontend
+participant Server
+participant "med-RAG Flow" as MedRAGFlow
+database Database
+database "Vector Store" as VectorStore
+participant "LLM Service" as LLMService
+
+== Q&A Flow ==
+
+User -> Frontend: Submits question
+Frontend -> Server: Sends question via API
+Server -> MedRAGFlow: Initiates Q&A task with question
+MedRAGFlow -> VectorStore: Searches for relevant document chunks
+VectorStore --> MedRAGFlow: Returns relevant chunks
+MedRAGFlow -> LLMService: Sends question and chunks for answer generation
+LLMService --> MedRAGFlow: Returns generated answer
+MedRAGFlow --> Server: Returns answer
+Server --> Frontend: Sends answer
+Frontend -> User: Displays answer
+
+== Document Ingestion Flow ==
+
+User -> Frontend: Uploads document
+Frontend -> Server: Sends document via API
+Server -> Database: Stores document metadata
+Database --> Server: Confirms metadata storage
+Server -> MedRAGFlow: Initiates document processing task with document
+MedRAGFlow -> MedRAGFlow: Performs document processing (e.g., chunking)
+MedRAGFlow -> LLMService: (Optional) Sends chunks for further processing (e.g., summarization, metadata extraction)
+LLMService --> MedRAGFlow: (Optional) Returns processed chunks
+MedRAGFlow -> VectorStore: Embeds and stores document chunks
+VectorStore --> MedRAGFlow: Confirms chunk storage
+MedRAGFlow --> Server: Confirms document processing completion
+Server -> Frontend: Notifies user of completion
+User <- Frontend: Sees document processing status
+
+@enduml

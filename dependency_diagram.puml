@@ -1,0 +1,74 @@
+@startuml
+!theme materia
+
+title Project Dependency Diagram
+
+package "Frontend" {
+  [Vue.js]
+  [Vue Router]
+  [Pinia]
+  [Axios]
+  [Tailwind CSS]
+  [Vite]
+  [UI Libraries]
+}
+
+package "Server" {
+  [FastAPI]
+  [SQLAlchemy]
+  [Asyncpg (PostgreSQL Driver)]
+  [Pydantic]
+  [Taskiq (Task Queue)]
+  [Gunicorn/Uvicorn]
+  [Logging (Loguru)]
+}
+
+package "med-RAG Flow" {
+  [Langchain]
+  [Document Loaders]
+  [Text Splitters]
+  [Embedding Models]
+  [LLM Wrappers]
+}
+
+database "PostgreSQL" as DB
+cloud "LLM Service (e.g., Ollama)" as LLM
+database "Vector Store (e.g., FAISS)" as VectorDB
+hexagon "Task Queue Broker (e.g., Redis)" as Broker
+
+Frontend -down-> Server : "API Calls (HTTP/S)"
+
+Server -down-> DB : "CRUD Operations (SQL)"
+Server -down-> Broker : "Task Enqueue/Dequeue"
+Server -down-> "med-RAG Flow" : "Invoke RAG Logic"
+
+"med-RAG Flow" -down-> LLM : "Prompts & Queries"
+"med-RAG Flow" -down-> VectorDB : "Store & Retrieve Embeddings"
+"med-RAG Flow" -up-> Server : "Return Results"
+
+
+note right of Frontend
+  Key Dependencies:
+  - Vue.js & Ecosystem
+  - Axios (HTTP Client)
+  - Tailwind CSS
+  - Vite (Build Tool)
+end note
+
+note left of Server
+  Key Dependencies:
+  - FastAPI (Web Framework)
+  - SQLAlchemy (ORM)
+  - Taskiq (Async Tasks)
+  - Pydantic (Validation)
+  - Langchain, Ollama, FAISS (via med-RAG Flow integration)
+end note
+
+note right of "med-RAG Flow"
+  Key Dependencies:
+  - Langchain (Core RAG Framework)
+  - LLM Interaction Libraries
+  - Vector Store Client Libraries
+  - Document Processing Libraries
+end note
+@enduml
