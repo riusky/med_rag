@@ -12,8 +12,13 @@ from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
 from tasks.llm_task.chat_task import *
 from tasks.doc_task.base_task import prepare_output_path
+from tasks.core import register_task
 
 # ------------------------ 核心处理任务 ------------------------
+@register_task(
+    key="process_pdf_file",
+    description="单文件处理的task"
+)
 @task(name="process_pdf_file")
 def process_pdf_file(
     pdf_file: Path, 
